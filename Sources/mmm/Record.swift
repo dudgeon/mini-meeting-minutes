@@ -22,8 +22,8 @@ struct Record: AsyncParsableCommand {
     @Option(help: "Core Audio UID of the input device to use instead of the system default.")
     var micDevice: String?
 
-    @Option(help: "How the recording screen looks: classic or synthwave. Press K to switch while recording.")
-    var skin: SkinName = .classic
+    @Option(help: "How the recording screen looks: sidebar or synthwave. Press K to switch while recording.")
+    var skin: Look = .sidebar
 
     // Testing aids: play files through the live path instead of capturing.
     @Option(help: .hidden) var replayRoom: String?
@@ -57,7 +57,7 @@ struct Record: AsyncParsableCommand {
             $0.outputPath = outputURL.path
             $0.redaction = !redaction.isEmpty
             $0.channels = channels
-            $0.skin = Skin.all.firstIndex { $0.name == skin.rawValue } ?? 0
+            $0.look = skin
         }
         let echo = await session.echoCancellationEnabled
         live.update { $0.echoCancellation = echo }
@@ -151,11 +151,11 @@ struct Record: AsyncParsableCommand {
                 // Keep the file current (one write per attributed window), so a crash loses little.
                 if case .turns = update {
                     let snapshot = live.snapshot
-                    try? MinutesDocument(
+                    let document = MinutesDocument(
                         title: minutes.title(startedAt: startDate), startDate: startDate,
                         duration: snapshot.elapsed, sources: snapshot.sources, redaction: redaction,
-                        echoCancellation: echo, turns: snapshot.turns
-                    ).write(to: outputURL)
+                        echoCancellation: echo, turns: snapshot.turns)
+                    if (try? document.write(to: outputURL)) != nil { live.update { $0.savedAt = snapshot.elapsed } }
                 }
             }
         }
@@ -327,9 +327,9 @@ struct LiveScreen {
                 live.update { if !$0.stopping { $0.elapsed = HostTime.seconds(from: origin, to: HostTime.now()) } }
                 let snapshot = live.snapshot
                 let size = terminal.size
-                let (canvas, maxScroll) = RetroView.render(
-                    snapshot, skin: Skin.all[snapshot.skin % Skin.all.count], analyzers: analyzers,
-                    width: size.columns, height: size.rows, time: Self.seconds(now - start), frameInterval: interval)
+                let (canvas, maxScroll) = snapshot.look.render(
+                    snapshot, analyzers: analyzers, width: size.columns, height: size.rows,
+                    time: Self.seconds(now - start), frameInterval: interval)
                 live.update {
                     $0.regions = canvas.regions
                     $0.maxScroll = maxScroll
@@ -424,7 +424,7 @@ struct LiveScreen {
                 if !speakers.isEmpty && !state.finished { state.naming = LiveState.Naming(speakers: speakers) }
             }
         case .visualizer: live.update { $0.visualizer = $0.visualizer.next }
-        case .skin: live.update { $0.skin = ($0.skin + 1) % Skin.all.count }
+        case .skin: live.update { $0.look = $0.look.next }
         case .help: live.update { $0.help = true }
         case .follow: live.update { $0.scroll = 0 }
         }

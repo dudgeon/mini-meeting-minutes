@@ -31,8 +31,10 @@ final class LiveState: Sendable {
         var outputPath = ""
         var redaction = true
         var echoCancellation = false
-        var skin = 0
+        var look = Look.sidebar
         var visualizer = VisualizerMode.spectrum
+        /// `elapsed` when the minutes file was last brought up to date.
+        var savedAt: TimeInterval?
         /// Rows scrolled back from the newest transcript line; 0 follows along.
         var scroll = 0
         var maxScroll = 0

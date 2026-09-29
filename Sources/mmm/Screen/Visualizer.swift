@@ -1,7 +1,7 @@
 import Accelerate
 import Foundation
 
-/// What the main window's display shows.
+/// What the visualizers show: spectrum bars, a waveform (the scope), or nothing moving.
 enum VisualizerMode: Sendable, CaseIterable {
     case spectrum, scope, off
 
