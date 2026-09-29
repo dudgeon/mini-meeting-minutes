@@ -16,32 +16,48 @@ struct ScreenModel {
         let seconds: Double
     }
 
+    enum Item {
+        case speech(Entry)
+        case note(Note)
+    }
+
     let state: LiveState.Snapshot
-    /// Turns in time order, with back-to-back speech by the same person made one entry.
-    let entries: [Entry]
+    /// Speech and notes in time order. Back-to-back speech by the same person is one entry; a
+    /// note typed during it comes right after it.
+    let timeline: [Item]
     /// Talk time per speaker, in order of first appearance.
     let talk: [Talk]
 
     init(_ state: LiveState.Snapshot) {
         self.state = state
-        var entries: [Entry] = []
+        var timeline: [Item] = []
         var order: [SpeakerID] = []
         var seconds: [SpeakerID: Double] = [:]
+        let notes = state.notes.sorted { $0.time < $1.time }
+        var nextNote = 0
+        var held: [Note] = []  // typed during the open entry, which they follow, as in the file
         for turn in state.turns.sorted(by: { $0.start < $1.start }) {
+            while nextNote < notes.count && notes[nextNote].time < turn.start {
+                held.append(notes[nextNote])
+                nextNote += 1
+            }
             if seconds[turn.speaker] == nil { order.append(turn.speaker) }
             seconds[turn.speaker, default: 0] += max(turn.end - turn.start, 0)
-            if var last = entries.last,
+            if case .speech(var last)? = timeline.last,
                 Self.name(of: last.speaker, names: state.names) == Self.name(of: turn.speaker, names: state.names),
                 turn.start - last.end < 10
             {
                 last.text += " " + turn.text
                 last.end = max(last.end, turn.end)
-                entries[entries.count - 1] = last
+                timeline[timeline.count - 1] = .speech(last)
             } else {
-                entries.append(Entry(speaker: turn.speaker, start: turn.start, end: turn.end, text: turn.text))
+                timeline += held.map { .note($0) }
+                held = []
+                timeline.append(.speech(Entry(speaker: turn.speaker, start: turn.start, end: turn.end, text: turn.text)))
             }
         }
-        self.entries = entries
+        timeline += (held + notes[nextNote...]).map { .note($0) }
+        self.timeline = timeline
         talk = order.map { Talk(speaker: $0, seconds: seconds[$0] ?? 0) }
     }
 
@@ -169,6 +185,7 @@ struct ScreenModel {
     /// Every key, for the help lists. `other` names the look that K switches to.
     static func shortcuts(switchingTo other: String) -> [(key: String, action: String)] {
         [
+            ("return", "write a note; return adds it where you started typing, esc drops it"),
             ("space", "pause or resume (paused audio is dropped, not kept)"),
             ("q", "stop and save the minutes"),
             ("n", "name the speakers"),

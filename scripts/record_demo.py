@@ -134,9 +134,9 @@ class Emulator:
             position += 1
 
 
-# Keys pressed during the demo, by seconds after the screen appears: synthwave mode for a while,
-# then back to the sidebar.
-KEYS = [(18, "k"), (34, "k")]
+# Keys pressed during the demo, by seconds after the screen appears: a note ("\r" is Return), then
+# synthwave mode for a while, and back to the sidebar.
+KEYS = [(8, "\rAsk finance for the infrastructure breakdown\r"), (20, "k"), (34, "k")]
 NAMES = ["Samantha", "Daniel", "Karen"]
 
 
@@ -153,10 +153,12 @@ def wait_for(path, text, timeout=180):
 def type_keys(process, typescript):
     wait_for(typescript, "Recording")
     start = time.time()
-    for at, key in KEYS:
+    for at, keys in KEYS:
         time.sleep(max(0, start + at - time.time()))
-        process.stdin.write(key.encode())
-        process.stdin.flush()
+        for key in keys:
+            process.stdin.write(key.encode())
+            process.stdin.flush()
+            time.sleep(0.07)
     wait_for(typescript, "Who was speaking?")
     time.sleep(1.2)
     for name in NAMES:
@@ -173,6 +175,8 @@ def main():
     parser.add_argument("--size", default=f"{COLUMNS}x{ROWS}", help="terminal size (default %(default)s)")
     parser.add_argument("--stills", type=Path, metavar="FOLDER",
                         help="save a PNG of the screen every few seconds here, instead of writing the GIF")
+    parser.add_argument("--minutes", type=Path, metavar="FOLDER",
+                        help="keep the minutes the demo meeting produces in FOLDER/Minutes")
     arguments = parser.parse_args()
     COLUMNS, ROWS = (int(n) for n in arguments.size.lower().split("x"))
 
@@ -181,8 +185,8 @@ def main():
         scratch = Path(scratch)
         room, remote = synthesize_call(scratch, "meeting-room.wav", "meeting-call.wav")
         typescript = scratch / "screen.txt"
-        minutes = scratch / "Minutes"  # named like the real folder, since the screen shows it
-        minutes.mkdir()
+        minutes = (arguments.minutes or scratch) / "Minutes"  # named like the real folder, as the screen shows it
+        minutes.mkdir(parents=True, exist_ok=True)
         command = (f"stty rows {ROWS} cols {COLUMNS}; exec '{ROOT / 'mmm'}' record --replay-room '{room}' "
                    f"--replay-remote '{remote}' --title 'Planning review' --output '{minutes}/'")
         process = subprocess.Popen(

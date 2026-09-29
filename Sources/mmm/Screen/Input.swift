@@ -8,16 +8,23 @@ enum Key: Sendable, Equatable {
     /// A left click on a cell (zero-based).
     case click(x: Int, y: Int)
     case wheelUp, wheelDown
+    /// Pasted text, delivered whole (bracketed paste), so a paste can't set off shortcuts.
+    case paste(String)
 }
 
 /// Turns raw terminal input bytes into `Key`s: UTF-8 text, control keys, escape sequences for
-/// arrows and paging, and SGR mouse reports.
+/// arrows and paging, SGR mouse reports, and bracketed pastes.
 struct KeyParser {
+    private static let pasteEnd: [UInt8] = Array("\u{1B}[201~".utf8)
+
     private var escape: [UInt8] = []
     private var utf8: [UInt8] = []
     private var utf8Needed = 0
+    /// Text pasted so far, between the terminal's paste start and end markers.
+    private var pasted: [UInt8]?
 
     mutating func feed(_ byte: UInt8) -> [Key] {
+        if pasted != nil { return continuePaste(byte) }
         if !escape.isEmpty { return continueEscape(byte) }
         if utf8Needed > 0 {
             utf8.append(byte)
@@ -73,6 +80,9 @@ struct KeyParser {
         case "F", "4~", "8~": return [.end]
         case "5~": return [.pageUp]
         case "6~": return [.pageDown]
+        case "200~":
+            pasted = []
+            return []
         default: break
         }
         // SGR mouse: ESC [ < button ; column ; row (M press | m release)
@@ -85,5 +95,14 @@ struct KeyParser {
         case 0: return [.click(x: numbers[1] - 1, y: numbers[2] - 1)]
         default: return []
         }
+    }
+
+    private mutating func continuePaste(_ byte: UInt8) -> [Key] {
+        pasted?.append(byte)
+        guard let text = pasted, text.count >= Self.pasteEnd.count,
+            text.suffix(Self.pasteEnd.count).elementsEqual(Self.pasteEnd)
+        else { return [] }
+        pasted = nil
+        return [.paste(String(decoding: text.dropLast(Self.pasteEnd.count), as: UTF8.self))]
     }
 }

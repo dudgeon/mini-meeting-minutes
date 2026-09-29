@@ -16,6 +16,7 @@ struct SynthwaveView {
         static let text = RGB(0xF3E9FF)
         static let dim = RGB(0x8A6FB8)
         static let unlit = RGB(0x3A1A66)
+        static let note = RGB(0xFFF1A8)
         static let room = [RGB(0xFF2E88), RGB(0xFF9F1C), RGB(0xFF6AD5), RGB(0xFFD166)]
         static let remote = [RGB(0x00F0FF), RGB(0xB18CFF), RGB(0x7CFFCB), RGB(0x8FB8FF)]
     }
@@ -144,20 +145,29 @@ struct SynthwaveView {
         var text = ""
         var live = false
         var cursor = false
+        var note = false
     }
 
     private func transcriptRows(textWidth: Int) -> [Row] {
         var rows: [Row] = []
-        for entry in model.entries {
-            let lines = entry.text.wrapped(to: textWidth)
+        for item in model.timeline {
+            let (label, color, start, text, note): (String, RGB, TimeInterval, String, Bool)
+            switch item {
+            case .speech(let entry):
+                (label, color, start, text, note) = (
+                    model.name(of: entry.speaker).uppercased(), Self.color(for: entry.speaker), entry.start,
+                    entry.text, false
+                )
+            case .note(let written):
+                (label, color, start, text, note) = ("✎ NOTE", Palette.yellow, written.time, written.text, true)
+            }
+            let lines = text.wrapped(to: textWidth)
             for index in 0..<max(lines.count, 2) {
-                var row = Row(text: index < lines.count ? lines[index] : "")
+                var row = Row(text: index < lines.count ? lines[index] : "", note: note)
                 if index == 0 {
-                    (row.label, row.labelColor, row.labelBold) = (
-                        model.name(of: entry.speaker).uppercased(), Self.color(for: entry.speaker), true
-                    )
+                    (row.label, row.labelColor, row.labelBold) = (label, color, true)
                 } else if index == 1 {
-                    row.label = ScreenModel.shortTime(entry.start)
+                    row.label = ScreenModel.shortTime(start)
                 }
                 rows.append(row)
             }
@@ -221,8 +231,8 @@ struct SynthwaveView {
             canvas.text(3, y, row.label.clipped(12), fg: row.labelColor, bg: bg, bold: row.labelBold)
         }
         canvas.rich(
-            16, y, row.text, fg: row.live ? Palette.dim : Palette.text, bg: bg, token: Palette.night,
-            tokenBackground: Palette.yellow, tokenBold: true, limit: width - 19)
+            16, y, row.text, fg: row.live ? Palette.dim : row.note ? Palette.note : Palette.text, bg: bg,
+            token: Palette.night, tokenBackground: Palette.yellow, tokenBold: true, limit: width - 19)
         if row.cursor && blink { canvas.put(17 + row.text.count, y, "█", fg: Palette.cyan, bg: bg) }
     }
 
@@ -239,12 +249,17 @@ struct SynthwaveView {
                 limit: width - 4)
             return
         }
+        if let draft = state.draft {
+            drawDraft(draft, y: y)
+            return
+        }
         var keys: [(String, String, ScreenAction)] =
             state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
             : [
-                ("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("Q", "STOP & SAVE", .stop), ("N", "NAME", .name),
-                ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help),
+                ("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("Q", "STOP & SAVE", .stop),
+                ("RETURN", "NOTE", .note), ("N", "NAME", .name), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
+                ("?", "HELP", .help),
             ]
         // In a narrow window the visualizer key goes first, then help; K (the way back) stays.
         func fits() -> Bool { keys.reduce(2) { $0 + $1.0.count + $1.1.count + 4 } - 3 <= width - 2 }
@@ -258,6 +273,20 @@ struct SynthwaveView {
             canvas.region(x, y, span, 1, action)
             x += span + 3
         }
+    }
+
+    /// The footer while a note is typed: the note's end, a cursor, and what Return and Escape do.
+    private mutating func drawDraft(_ draft: LiveState.NoteDraft, y: Int) {
+        let label = " ✎ NOTE "
+        let help = "RETURN ADDS IT AT \(ScreenModel.shortTime(draft.start ?? state.elapsed)) · ESC CANCELS"
+        let x = 2 + label.count + 1
+        let room = max(8, width - x - help.count - 5)
+        canvas.text(2, y, label, fg: Palette.night, bg: Palette.yellow, bold: true)
+        let shown = draft.text.count > room ? "…" + draft.text.suffix(room - 1) : draft.text
+        canvas.text(x, y, shown, fg: Palette.note)
+        if draft.text.isEmpty { canvas.text(x + 1, y, "TYPE YOUR NOTE", fg: Palette.dim) }
+        if blink || draft.text.isEmpty { canvas.put(x + shown.count, y, "█", fg: Palette.cyan) }
+        if width - help.count - 2 > x + room { canvas.text(width - 2 - help.count, y, help, fg: Palette.dim) }
     }
 
     private func warningLines() -> [String] {

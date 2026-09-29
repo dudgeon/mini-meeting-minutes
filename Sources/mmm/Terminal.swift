@@ -22,13 +22,14 @@ final class Terminal: Sendable {
         original.withLock { $0 = attributes }
         attributes.c_lflag &= ~tcflag_t(ICANON | ECHO)
         tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
-        // Alternate screen, hidden cursor, no line wrap, and mouse clicks and wheel (SGR reports).
-        write("\u{1B}[?1049h\u{1B}[?25l\u{1B}[?7l\u{1B}[?1000h\u{1B}[?1006h")
+        // Alternate screen, hidden cursor, no line wrap, mouse clicks and wheel (SGR reports), and
+        // pastes marked as such.
+        write("\u{1B}[?1049h\u{1B}[?25l\u{1B}[?7l\u{1B}[?1000h\u{1B}[?1006h\u{1B}[?2004h")
     }
 
     func leaveFullScreen() {
         stopReadingKeys()
-        write("\u{1B}[?1000l\u{1B}[?1006l\u{1B}[?7h\u{1B}[0m\u{1B}[?25h\u{1B}[?1049l")
+        write("\u{1B}[?2004l\u{1B}[?1000l\u{1B}[?1006l\u{1B}[?7h\u{1B}[0m\u{1B}[?25h\u{1B}[?1049l")
         if var attributes = original.withLock({ $0 }) {
             tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
         }

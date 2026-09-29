@@ -25,6 +25,11 @@ import Testing
         #expect(keys("Zoë\r\u{7F}\t") == [.char("Z"), .char("o"), .char("ë"), .enter, .backspace, .tab])
     }
 
+    @Test func pastesArriveWhole() {
+        // A paste can hold Return and letters that are shortcuts; none of them may act as keys.
+        #expect(keys("\u{1B}[200~quick\nnote\u{1B}[201~x") == [.paste("quick\nnote"), .char("x")])
+    }
+
     @Test func escapeOnItsOwn() {
         var parser = KeyParser()
         #expect(parser.feed(0x1B).isEmpty)
@@ -122,7 +127,22 @@ import Testing
         #expect(named.contains("Priya") || named.contains("PRIYA"))
         let canvas = Self.render(Self.snapshot(), look, 120, 42)
         let actions = Set(canvas.regions.map { "\($0.action)" })
-        #expect(actions.isSuperset(of: ["stop", "pause", "name", "visualizer", "skin", "help"]))
+        #expect(actions.isSuperset(of: ["stop", "pause", "name", "note", "visualizer", "skin", "help"]))
+    }
+
+    @Test(arguments: Look.allCases)
+    func notesInTheTimeline(look: Look) {
+        var state = Self.snapshot()
+        state.notes = [Note(time: 6.5, text: "Ask for the quarterly numbers")]
+        let text = Self.text(Self.render(state, look, 120, 42))
+        #expect(text.contains("Ask for the quarterly numbers"))
+        // Between the two turns: after the first speaker's words, before the second's.
+        let note = text.range(of: "Ask for the quarterly numbers")!.lowerBound
+        #expect(text.range(of: "planning review.")!.lowerBound < note)
+        #expect(note < text.range(of: "about the budget.")!.lowerBound)
+        // A note being typed shows where it's typed.
+        state.draft = LiveState.NoteDraft(text: "Budget owner is", start: 40)
+        #expect(Self.text(Self.render(state, look, 120, 42)).contains("Budget owner is"))
     }
 
     @Test func redactionPlaceholdersStandApart() {
@@ -149,6 +169,36 @@ import Testing
         let trace = ScreenModel.braille(ScreenModel.waveform((0..<600).map { sin(Float($0) / 5) }, count: 20))
         #expect(trace.count == 10)
         #expect(trace.unicodeScalars.allSatisfy { (0x2800...0x28FF).contains($0.value) })
+    }
+}
+
+@Suite struct NoteTypingTests {
+    @Test func returnWritesANoteWhereTypingBegan() async {
+        let live = LiveState()
+        live.update { $0.elapsed = 10 }
+        let (_, stop) = AsyncStream.makeStream(of: Void.self)
+        let (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        let (_, naming) = AsyncStream.makeStream(of: Void.self)
+        func press(_ keys: Key...) {
+            for key in keys { LiveScreen.handle(key, live: live, paused: PauseFlag(), stop: stop, save: save, finishNaming: naming) }
+        }
+        press(.enter)
+        #expect(live.snapshot.draft != nil)
+        live.update { $0.elapsed = 12 }  // typing starts two seconds later...
+        press(.char("q"), .char("n"), .paste("\nnext steps"), .backspace)
+        live.update { $0.elapsed = 30 }  // ...and ends much later
+        #expect(live.snapshot.draft?.text == "qn next step")
+        press(.enter)
+        #expect(live.snapshot.notes == [Note(time: 12, text: "qn next step")])
+        #expect(live.snapshot.draft == nil && !live.snapshot.stopping)
+        save.finish()
+        var requested = 0
+        for await _ in saves { requested += 1 }
+        #expect(requested == 1)
+
+        // Escape drops a note, and an empty one isn't added.
+        press(.enter, .char("x"), .escape, .enter, .enter)
+        #expect(live.snapshot.notes.count == 1 && live.snapshot.draft == nil)
     }
 }
 

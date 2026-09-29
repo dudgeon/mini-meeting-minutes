@@ -73,6 +73,18 @@ public struct Turn: Sendable, Identifiable {
     }
 }
 
+/// Something typed by the person recording, pinned to the moment they started typing it.
+/// Notes are theirs, so they're saved exactly as typed, like the names they give speakers.
+public struct Note: Sendable, Equatable {
+    public var time: TimeInterval
+    public var text: String
+
+    public init(time: TimeInterval, text: String) {
+        self.time = time
+        self.text = text
+    }
+}
+
 extension Array where Element == Word {
     /// Joins words the way the recognizer emitted them: tokens carry their own punctuation.
     public var joinedText: String { map(\.text).joined(separator: " ") }

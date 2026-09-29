@@ -145,18 +145,24 @@ struct Record: AsyncParsableCommand {
             }
             if let failure { throw failure }
         }
+        // Keep the file current, so a crash loses little: it's rewritten after each attributed
+        // window and each note. One task does the writing, so writes never overlap, and each one
+        // has everything so far.
+        let (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        let saving = Task {
+            for await _ in saves {
+                let snapshot = live.snapshot
+                let document = MinutesDocument(
+                    title: minutes.title(startedAt: startDate), startDate: startDate,
+                    duration: snapshot.elapsed, sources: snapshot.sources, redaction: redaction,
+                    echoCancellation: echo, turns: snapshot.turns, notes: snapshot.notes)
+                if (try? document.write(to: outputURL)) != nil { live.update { $0.savedAt = snapshot.elapsed } }
+            }
+        }
         let updates = Task {
             for await update in session.updates {
                 live.apply(update)
-                // Keep the file current (one write per attributed window), so a crash loses little.
-                if case .turns = update {
-                    let snapshot = live.snapshot
-                    let document = MinutesDocument(
-                        title: minutes.title(startedAt: startDate), startDate: startDate,
-                        duration: snapshot.elapsed, sources: snapshot.sources, redaction: redaction,
-                        echoCancellation: echo, turns: snapshot.turns)
-                    if (try? document.write(to: outputURL)) != nil { live.update { $0.savedAt = snapshot.elapsed } }
-                }
+                if case .turns = update { save.yield() }
             }
         }
 
@@ -169,9 +175,11 @@ struct Record: AsyncParsableCommand {
             interrupt.cancel()
             signal(SIGINT, SIG_DFL)
         }
-        let screen = LiveScreen.start(live: live, paused: paused, origin: origin, stop: stop)
+        let screen = LiveScreen.start(live: live, paused: paused, origin: origin, stop: stop, save: save)
         if screen == nil { Console.note("Recording. Press Ctrl-C to stop.") }
         for await _ in stops { break }
+        // A note still being typed (Ctrl-C, or the end of a replay) is kept, not lost.
+        live.update { state in _ = state.addDraft() }
 
         // Stop capturing, let the pipeline drain, then relabel speakers across the whole meeting.
         // The screen stays up meanwhile and shows the final labels.
@@ -184,6 +192,8 @@ struct Record: AsyncParsableCommand {
         try await processing.value
         let turns = try await session.finish()
         _ = await updates.value
+        save.finish()
+        await saving.value
         let names = Self.carryNames(from: live.snapshot, to: turns)
         live.update {
             $0.turns = turns
@@ -206,7 +216,8 @@ struct Record: AsyncParsableCommand {
         var document = MinutesDocument(
             title: minutes.title(startedAt: startDate), startDate: startDate,
             duration: HostTime.seconds(from: origin, to: HostTime.now()), sources: snapshot.sources,
-            redaction: redaction, echoCancellation: echo, turns: turns, names: snapshot.names, inProgress: false)
+            redaction: redaction, echoCancellation: echo, turns: turns, names: snapshot.names, notes: snapshot.notes,
+            inProgress: false)
         if screen == nil && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
         // Replays are automated (tests, the README demo): don't wait for a key.
@@ -301,9 +312,11 @@ struct LiveScreen {
     let drawing: Task<Void, Never>
     let namesDone: AsyncStream<Void>
 
-    /// Takes over the terminal, or returns nil when it isn't interactive.
+    /// Takes over the terminal, or returns nil when it isn't interactive. `save` asks for the
+    /// minutes file to be rewritten, after a note is added.
     static func start(
-        live: LiveState, paused: PauseFlag, origin: UInt64, stop: AsyncStream<Void>.Continuation
+        live: LiveState, paused: PauseFlag, origin: UInt64, stop: AsyncStream<Void>.Continuation,
+        save: AsyncStream<Void>.Continuation
     ) -> LiveScreen? {
         guard Terminal.isInteractive else { return nil }
         let terminal = Terminal()
@@ -311,7 +324,7 @@ struct LiveScreen {
         let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
         let keys = Task {
             for await key in terminal.keys() {
-                handle(key, live: live, paused: paused, stop: stop, finishNaming: finishNaming)
+                handle(key, live: live, paused: paused, stop: stop, save: save, finishNaming: finishNaming)
             }
         }
         let drawing = Task {
@@ -363,13 +376,18 @@ struct LiveScreen {
 
     // MARK: Input
 
-    private static func handle(
+    static func handle(
         _ key: Key, live: LiveState, paused: PauseFlag, stop: AsyncStream<Void>.Continuation,
-        finishNaming: AsyncStream<Void>.Continuation
+        save: AsyncStream<Void>.Continuation, finishNaming: AsyncStream<Void>.Continuation
     ) {
         let snapshot = live.snapshot
         if snapshot.naming != nil {
             if editNames(key, live: live) { finishNaming.yield() }
+            return
+        }
+        // While a note is being typed, keys type into it; scrolling and clicks work as usual.
+        if snapshot.draft != nil, let added = editNote(key, live: live) {
+            if added { save.yield() }
             return
         }
         if snapshot.help {
@@ -389,6 +407,7 @@ struct LiveScreen {
             case "f": action = .follow
             default: break
             }
+        case .enter: action = .note
         case .up: scroll(1, live)
         case .down: scroll(-1, live)
         case .pageUp: scroll(10, live)
@@ -423,15 +442,55 @@ struct LiveScreen {
                 }
                 if !speakers.isEmpty && !state.finished { state.naming = LiveState.Naming(speakers: speakers) }
             }
+        case .note:
+            if !busy { live.update { if $0.draft == nil { $0.draft = LiveState.NoteDraft() } } }
         case .visualizer: live.update { $0.visualizer = $0.visualizer.next }
         case .skin: live.update { $0.look = $0.look.next }
-        case .help: live.update { $0.help = true }
+        case .help: live.update { if $0.draft == nil { $0.help = true } }
         case .follow: live.update { $0.scroll = 0 }
         }
     }
 
     private static func scroll(_ rows: Int, _ live: LiveState) {
         live.update { $0.scroll = max(0, min($0.maxScroll, $0.scroll + rows)) }
+    }
+
+    /// Types into the note being written: Return adds it, Escape drops it. Returns nil for keys
+    /// that aren't for the note (scrolling, clicks), otherwise whether a note was added.
+    private static func editNote(_ key: Key, live: LiveState) -> Bool? {
+        var result: Bool? = false
+        live.update { state in
+            guard var draft = state.draft else {
+                result = nil
+                return
+            }
+            switch key {
+            case .char(let char):
+                draft.start = draft.start ?? state.elapsed
+                if draft.text.count < 1000 { draft.text.append(char) }
+            case .paste(let text):
+                draft.start = draft.start ?? state.elapsed
+                // A note is one paragraph: line breaks in a paste become spaces.
+                draft.text = String((draft.text + String(text.map { $0.isNewline ? " " : $0 })).prefix(1000))
+            case .backspace:
+                if !draft.text.isEmpty { draft.text.removeLast() }
+            case .tab:
+                break
+            case .enter:
+                state.draft = draft
+                result = state.addDraft()
+                if result == true { state.scroll = 0 }
+                return
+            case .escape:
+                state.draft = nil
+                return
+            default:
+                result = nil
+                return
+            }
+            state.draft = draft
+        }
+        return result
     }
 
     /// Edits names in the naming dialog. Returns true when the end-of-meeting dialog closes.
@@ -444,6 +503,9 @@ struct LiveScreen {
             switch key {
             case .char(let char):
                 if (state.names[speaker] ?? "").count < 40 { state.names[speaker, default: ""].append(char) }
+            case .paste(let text):
+                let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                state.names[speaker] = String(((state.names[speaker] ?? "") + line).prefix(40))
             case .backspace:
                 if var name = state.names[speaker], !name.isEmpty {
                     name.removeLast()

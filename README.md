@@ -11,12 +11,16 @@ blanked out.
 ![Mini Meeting Minutes recording a meeting: what people say appears as they say it, then each line is attributed to a speaker, with names, email addresses and phone numbers blanked out](docs/demo.gif)
 
 *A short meeting (made with macOS voices) running through Mini Meeting Minutes about four times
-faster than real time. Synthwave mode makes an appearance, and the speakers get named at the end.*
+faster than real time. A note gets added, synthwave mode makes an appearance, and the speakers get
+named at the end.*
 The minutes it saves look like this:
 
 ```markdown
 **Room 1** · 00:00:17
 That is concerning. Can you send me the full breakdown? My email is [EMAIL].
+
+> **Note** · 00:00:21
+> Ask finance for the breakdown before Friday
 
 **Remote 2** · 00:00:24
 I can help with that. You can also call me at [PHONE] if anything is unclear.
@@ -43,7 +47,9 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
 1. Double-click **Mini Meeting Minutes** on your Desktop.
 2. The first time, your Mac asks whether **Terminal** may use the microphone and record system
    audio. Click **Allow** both times.
-3. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
+3. To jot something down, press **Return**, type your note, and press **Return** again. It goes
+   into the transcript at the moment you started typing.
+4. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
    skip them), then press **Return** once more to open your minutes.
 
 Your minutes are saved in the **Minutes** folder inside **Documents**.
@@ -88,8 +94,13 @@ speech appears within a few seconds. Speaker labels usually follow within 30 sec
 stretch of audio has been analyzed. Press **K** for synthwave mode: a pixel-art sunset whose city
 skyline dances to the microphone (left of the sun) and the call (right).
 
+Notes you type land in the transcript at the moment you started typing, right after whatever was
+being said, and in the saved minutes as quotes. They're saved exactly as you typed them: redaction
+applies only to what people said.
+
 | Key | Does |
 |---|---|
+| **Return** | Write a note; **Return** again adds it, **Esc** cancels |
 | **Space** | Pause or resume (paused audio is dropped, not buffered) |
 | **Q** or Ctrl-C | Stop and save |
 | **N** | Name the speakers, any time |

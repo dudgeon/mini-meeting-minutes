@@ -16,6 +16,7 @@ struct SidebarView {
         static let green = RGB(0x8FB37A)
         static let amber = RGB(0xE5B567)
         static let live = RGB(0x2A2825)
+        static let note = RGB(0x33312D)
         static let tokenText = RGB(0xF2C4AE)
         static let tokenBackground = RGB(0x3B2A22)
         static let room = [RGB(0xE08A6A), RGB(0xB89BD9), RGB(0x8FB37A), RGB(0xD98AB0)]
@@ -69,11 +70,13 @@ struct SidebarView {
         return ("●", Palette.side.mixed(with: Palette.accent, 0.85 + 0.15 * sin(time * 3)), "Recording")
     }
 
-    private var keyList: [(key: String, label: String, action: ScreenAction)] {
+    private var keyList: [(key: String, label: String, action: ScreenAction?)] {
+        if state.draft != nil { return [("return", "add the note", nil), ("esc", "cancel", nil)] }
         if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         return [
-            ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop and save", .stop),
-            ("n", "name speakers", .name), ("k", "synthwave", .skin), ("?", "all shortcuts", .help),
+            ("return", "add a note", .note), ("space", state.paused ? "resume" : "pause", .pause),
+            ("q", "stop and save", .stop), ("n", "name speakers", .name), ("k", "synthwave", .skin),
+            ("?", "all shortcuts", .help),
         ]
     }
 
@@ -92,16 +95,16 @@ struct SidebarView {
         canvas.region(0, 3, w, 1, .pause)
         canvas.text(4, 4, state.title.clipped(w - 6), fg: Palette.dim, bg: bg)
 
-        // Keys sit at the bottom. The other sections fill down from the top; in a short window
-        // speakers get one row each, then privacy and listening make way.
-        let keys = keyList
-        let keysTop = height - 2 - keys.count
+        // Keys sit at the bottom, in the same place whichever keys apply. The other sections fill
+        // down from the top; in a short window speakers get one row each, then privacy and
+        // listening make way.
+        let keysTop = height - 8
         heading("KEYS", y: keysTop)
-        for (index, key) in keys.enumerated() {
+        for (index, key) in keyList.enumerated() {
             let y = keysTop + 1 + index
             canvas.text(4, y, key.key, fg: Palette.accent, bg: bg)
             canvas.text(11, y, key.label, fg: Palette.dim, bg: bg, limit: w - 12)
-            canvas.region(0, y, w, 1, key.action)
+            if let action = key.action { canvas.region(0, y, w, 1, action) }
         }
 
         let top = 7
@@ -252,6 +255,15 @@ struct SidebarView {
             panelTop = panelBottom - visible - 1
             drawHelp(rows, x: x, top: panelTop, width: w, visible: visible)
             hint("press any key to close", x: x, width: w)
+        } else if let draft = state.draft {
+            let lines = draft.text.isEmpty ? [""] : draft.text.wrapped(to: max(10, w - 7))
+            let visible = min(lines.count, 4)
+            panelTop = panelBottom - visible - 1
+            drawDraft(
+                draft, lines: Array(lines.suffix(visible)), scrolled: lines.count > visible, x: x, top: panelTop,
+                width: w)
+            let time = ScreenModel.shortTime(draft.start ?? state.elapsed)
+            hint("return adds the note at \(time) · esc cancels", x: x, width: w)
         } else {
             drawPrompt(x: x, top: panelTop, width: w)
             if !withSidebar { drawKeyHints(x: x, width: w) }
@@ -291,19 +303,19 @@ struct SidebarView {
 
     private mutating func drawKeyHints(x: Int, width w: Int) {
         var column = x + 1
-        let keys: [(key: String, label: String, action: ScreenAction)] =
+        let keys: [(key: String, label: String, action: ScreenAction?)] =
             state.finished
             ? keyList
             : [
-                ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop", .stop), ("n", "name", .name),
-                ("k", "synthwave", .skin), ("?", "help", .help),
+                ("return", "note", .note), ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop", .stop),
+                ("n", "name", .name), ("k", "synthwave", .skin), ("?", "help", .help),
             ]
         for key in keys {
             let span = key.key.count + 1 + key.label.count
             guard column + span <= x + w else { break }
             canvas.text(column, height - 1, key.key, fg: Palette.accent)
             canvas.text(column + key.key.count + 1, height - 1, key.label, fg: Palette.dim)
-            canvas.region(column, height - 1, span, 1, key.action)
+            if let action = key.action { canvas.region(column, height - 1, span, 1, action) }
             column += span + 3
         }
     }
@@ -325,20 +337,29 @@ struct SidebarView {
                 x + 5, y, "Paused. Nothing is being recorded; press space to carry on.", fg: Palette.amber, limit: w - 7)
             canvas.region(x, top, w, 3, .resume)
         } else {
-            let placeholder: String
-            if let speaker = model.newestUnnamed {
-                placeholder = "Press n to name \(speaker.description)…"
-            } else if !model.talk.isEmpty {
-                placeholder = "Press n to rename a speaker…"
-            } else {
-                placeholder = "Listening… what people say appears above."
-            }
+            var placeholder = "Press return to add a note"
+            if let speaker = model.newestUnnamed { placeholder += " · n to name \(speaker.description)" }
             let stop = "q to stop"
             canvas.put(x + 2, y, ">", fg: Palette.text)
-            canvas.text(x + 4, y, placeholder, fg: Palette.quiet, limit: w - 8 - stop.count)
+            canvas.text(x + 4, y, placeholder.clipped(w - 8 - stop.count), fg: Palette.quiet)
             canvas.text(x + w - 2 - stop.count, y, stop, fg: Palette.quiet)
-            canvas.region(x, top, w, 3, model.talk.isEmpty ? .help : .name)
+            canvas.region(x, top, w, 3, .note)
         }
+    }
+
+    /// The prompt box while a note is typed: it grows to four lines, then shows the end.
+    private mutating func drawDraft(
+        _ draft: LiveState.NoteDraft, lines: [String], scrolled: Bool, x: Int, top: Int, width w: Int
+    ) {
+        canvas.box(x, top, w, lines.count + 2, border: Palette.accent)
+        if !scrolled { canvas.put(x + 2, top + 1, ">", fg: Palette.text) }
+        for (index, line) in lines.enumerated() {
+            canvas.text(x + 4, top + 1 + index, line, fg: Palette.text)
+        }
+        let last = lines.last ?? ""
+        let cursor = x + 4 + last.count + (draft.text.hasSuffix(" ") && !last.isEmpty ? 1 : 0)
+        canvas.put(min(cursor, x + w - 2), top + lines.count, "▍", fg: Palette.accent)
+        if draft.text.isEmpty { canvas.text(x + 5, top + 1, "Type a note…", fg: Palette.quiet, limit: w - 7) }
     }
 
     private mutating func drawNaming(_ naming: LiveState.Naming, x: Int, top: Int, width w: Int, visible: Int) {
@@ -380,7 +401,7 @@ struct SidebarView {
     // MARK: - Transcript
 
     private struct Row {
-        enum Kind { case label, text, gap, pad, liveLabel, liveText }
+        enum Kind { case label, text, gap, pad, liveLabel, liveText, note }
         var kind: Kind
         var color = Palette.text
         var text = ""
@@ -394,15 +415,26 @@ struct SidebarView {
     private func transcriptRows(textWidth: Int) -> [Row] {
         var rows: [Row] = []
         let focus = state.naming.flatMap { $0.speakers.indices.contains($0.selected) ? $0.speakers[$0.selected] : nil }
-        for entry in model.entries {
-            let color = Self.color(for: entry.speaker)
-            let focused = focus == nil || focus == entry.speaker
-            rows.append(
-                Row(
-                    kind: .label, color: color, text: model.name(of: entry.speaker),
-                    time: ScreenModel.shortTime(entry.start), focused: focused))
-            for line in entry.text.wrapped(to: textWidth) {
-                rows.append(Row(kind: .text, color: color, text: line, focused: focused))
+        for item in model.timeline {
+            switch item {
+            case .speech(let entry):
+                let color = Self.color(for: entry.speaker)
+                let focused = focus == nil || focus == entry.speaker
+                rows.append(
+                    Row(
+                        kind: .label, color: color, text: model.name(of: entry.speaker),
+                        time: ScreenModel.shortTime(entry.start), focused: focused))
+                for line in entry.text.wrapped(to: textWidth) {
+                    rows.append(Row(kind: .text, color: color, text: line, focused: focused))
+                }
+            case .note(let note):
+                // Notes look like your own messages in Claude: after a ">", on a band of their own.
+                for (index, line) in note.text.wrapped(to: max(10, textWidth - 8)).enumerated() {
+                    rows.append(
+                        Row(
+                            kind: .note, text: line, time: index == 0 ? ScreenModel.shortTime(note.time) : "",
+                            focused: focus == nil))
+                }
             }
             rows.append(Row(kind: .gap))
         }
@@ -471,6 +503,14 @@ struct SidebarView {
                 x + 3, y, row.text, fg: Palette.dim, bg: Palette.live, token: Palette.tokenText,
                 tokenBackground: Palette.tokenBackground, limit: w - 4)
             if row.last { canvas.put(x + 4 + row.text.count, y, "▍", fg: Palette.accent, bg: Palette.live) }
+        case .note:
+            let ink = row.focused ? Palette.text : Palette.quiet
+            canvas.fill(x, y, w, 1, bg: Palette.note)
+            if !row.time.isEmpty {
+                canvas.put(x + 1, y, ">", fg: ink, bg: Palette.note)
+                canvas.text(x + w - row.time.count, y, row.time, fg: Palette.dim, bg: Palette.note)
+            }
+            canvas.text(x + 3, y, row.text, fg: ink, bg: Palette.note, limit: w - 12)
         }
     }
 

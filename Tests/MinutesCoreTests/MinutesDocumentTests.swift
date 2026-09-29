@@ -47,6 +47,32 @@ import Testing
         #expect(markdown.contains("**Remote 2** · 01:02:05  \nHello."))
     }
 
+    @Test func notesFollowTheParagraphTheyWereTypedDuring() {
+        var doc = document([
+            turn(.room, 1, 0, "Good morning."), turn(.room, 1, 3, "Let's start."), turn(.remote, 1, 6, "Hi."),
+        ])
+        doc.notes = [
+            Note(time: 90, text: "Follow up by Friday"), Note(time: 2, text: "Ask about the budget"),
+            Note(time: 5.5, text: "Dana joined"),
+        ]
+        // Room 1's two turns stay one paragraph, with the note typed between them after it.
+        #expect(doc.blocks == [
+            .speech(speaker: "Room 1", start: 0, text: "Good morning. Let's start."),
+            .note(Note(time: 2, text: "Ask about the budget")),
+            .note(Note(time: 5.5, text: "Dana joined")),
+            .speech(speaker: "Remote 1", start: 6, text: "Hi."),
+            .note(Note(time: 90, text: "Follow up by Friday")),
+        ])
+        #expect(doc.markdown().contains("Let's start.\n\n> **Note** · 00:00:02  \n> Ask about the budget\n\n> **Note**"))
+        #expect(doc.paragraphs.count == 2)
+    }
+
+    @Test func notesWithoutSpeech() {
+        var doc = document([])
+        doc.notes = [Note(time: 65, text: "Nobody has joined yet")]
+        #expect(doc.markdown().hasSuffix("---\n\n> **Note** · 00:01:05  \n> Nobody has joined yet\n"))
+    }
+
     @Test func timestamps() {
         #expect(MinutesDocument.timestamp(0) == "00:00:00")
         #expect(MinutesDocument.timestamp(59.9) == "00:00:59")

@@ -11,6 +11,13 @@ final class LiveState: Sendable {
         var final = false
     }
 
+    /// A note being typed.
+    struct NoteDraft: Sendable {
+        var text = ""
+        /// When typing began: where the note goes in the transcript.
+        var start: TimeInterval?
+    }
+
     struct Snapshot: Sendable {
         var title = ""
         var elapsed: TimeInterval = 0
@@ -27,6 +34,8 @@ final class LiveState: Sendable {
         var turns: [Turn] = []
         var pending: [Channel: String] = [:]
         var names: [SpeakerID: String] = [:]
+        var notes: [Note] = []
+        var draft: NoteDraft?
         var warnings: [String] = []
         var outputPath = ""
         var redaction = true
@@ -81,6 +90,19 @@ final class LiveState: Sendable {
                 snapshot.buffered[channel] = seconds
             }
         }
+    }
+}
+
+extension LiveState.Snapshot {
+    /// Adds the note being typed, if it has any words, and closes it. Returns whether a note was
+    /// added.
+    mutating func addDraft() -> Bool {
+        guard let draft else { return false }
+        self.draft = nil
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        notes.append(Note(time: draft.start ?? elapsed, text: text))
+        return true
     }
 }
 

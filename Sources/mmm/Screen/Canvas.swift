@@ -48,7 +48,7 @@ struct HitRegion: Sendable {
 
 /// What a click on the screen does.
 enum ScreenAction: Sendable, Equatable {
-    case resume, pause, stop, name, visualizer, skin, help, follow
+    case resume, pause, stop, name, note, visualizer, skin, help, follow
 }
 
 /// An off-screen grid of cells that views draw into; `Screen` puts it on the terminal.
