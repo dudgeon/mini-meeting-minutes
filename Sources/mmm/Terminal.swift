@@ -97,6 +97,28 @@ extension String {
         return width
     }
 
+    /// Cuts the string at `width` visible columns, keeping escape sequences intact and resetting
+    /// styles if anything was cut, so a line can never wrap and break the layout.
+    func truncated(toVisibleWidth width: Int) -> String {
+        guard visibleWidth > width else { return self }
+        var result = ""
+        var visible = 0
+        var inEscape = false
+        for scalar in unicodeScalars {
+            if inEscape {
+                result.unicodeScalars.append(scalar)
+                if (0x40...0x7E).contains(scalar.value) && scalar != "[" { inEscape = false }
+            } else if scalar == "\u{1B}" {
+                inEscape = true
+                result.unicodeScalars.append(scalar)
+            } else if visible < width {
+                result.unicodeScalars.append(scalar)
+                visible += 1
+            }
+        }
+        return result + "\u{1B}[0m"
+    }
+
     /// Word-wraps plain text to `width` columns.
     func wrapped(to width: Int) -> [String] {
         guard width > 0 else { return [self] }

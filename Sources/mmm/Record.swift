@@ -154,9 +154,22 @@ struct Record: AsyncParsableCommand {
             }
         }
 
-        try await runScreen(live: live, paused: paused, origin: origin, stops: stops, stop: stop)
+        // Show the live screen until q, Ctrl-C, or the end of a replay.
+        signal(SIGINT, SIG_IGN)
+        let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        interrupt.setEventHandler { stop.yield() }
+        interrupt.resume()
+        defer {
+            interrupt.cancel()
+            signal(SIGINT, SIG_DFL)
+        }
+        let screen = LiveScreen.start(live: live, paused: paused, origin: origin, stop: stop)
+        if screen == nil { Console.note("Recording. Press Ctrl-C to stop.") }
+        for await _ in stops { break }
 
         // Stop capturing, let the pipeline drain, then relabel speakers across the whole meeting.
+        // The screen stays up meanwhile, and shows the final labels before it closes.
+        screen?.stopKeys()
         live.update { $0.stopping = true }
         microphone?.stop()
         system?.stop()
@@ -166,6 +179,15 @@ struct Record: AsyncParsableCommand {
         try await processing.value
         let turns = try await session.finish()
         _ = await updates.value
+        live.update {
+            $0.turns = turns
+            $0.pending = [:]
+            $0.finished = true
+        }
+        if let screen {
+            try? await Task.sleep(for: .seconds(2))
+            await screen.close()
+        }
 
         let snapshot = live.snapshot
         var document = MinutesDocument(
@@ -174,59 +196,8 @@ struct Record: AsyncParsableCommand {
             redaction: redaction, echoCancellation: echo, turns: turns, inProgress: false)
         if !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
-        Setup.finished(outputURL, turns: turns.count, speakers: document.speakers.count)
-    }
-
-    /// Shows the live screen until the user stops the recording (q or Ctrl-C).
-    private func runScreen(
-        live: LiveState, paused: PauseFlag, origin: UInt64, stops: AsyncStream<Void>,
-        stop: AsyncStream<Void>.Continuation
-    ) async throws {
-        signal(SIGINT, SIG_IGN)
-        let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-        interrupt.setEventHandler { stop.yield() }
-        interrupt.resume()
-        defer {
-            interrupt.cancel()
-            signal(SIGINT, SIG_DFL)
-        }
-
-        guard Terminal.isInteractive else {
-            Console.note("Recording. Press Ctrl-C to stop.")
-            for await _ in stops { break }
-            return
-        }
-
-        let terminal = Terminal()
-        terminal.enterFullScreen()
-        defer { terminal.leaveFullScreen() }
-
-        let keys = Task {
-            for await key in terminal.keys() {
-                switch key {
-                case UInt8(ascii: "q"), UInt8(ascii: "Q"):
-                    stop.yield()
-                case UInt8(ascii: "p"), UInt8(ascii: "P"), UInt8(ascii: " "):
-                    let nowPaused = paused.toggle()
-                    live.update { $0.paused = nowPaused }
-                default:
-                    break
-                }
-            }
-        }
-        let screen = Task {
-            while !Task.isCancelled {
-                live.update { $0.elapsed = HostTime.seconds(from: origin, to: HostTime.now()) }
-                let size = terminal.size
-                terminal.write(
-                    "\u{1B}[H" + LiveView.render(live.snapshot, columns: size.columns, rows: size.rows) + "\u{1B}[J")
-                try? await Task.sleep(for: .milliseconds(150))
-            }
-        }
-        for await _ in stops { break }
-        screen.cancel()
-        terminal.stopReadingKeys()
-        keys.cancel()
+        // Replays are automated (tests, the README demo): don't wait for a key.
+        Setup.finished(outputURL, turns: turns.count, speakers: document.speakers.count, offerToOpen: !replaying)
     }
 
     /// Plays the replay files through the live path in real time (times `replaySpeed`), then
@@ -291,4 +262,57 @@ final class PauseFlag: Sendable {
 struct UncheckedBox<Value>: @unchecked Sendable {
     let value: Value
     init(_ value: Value) { self.value = value }
+}
+
+/// The full-screen live view: drawn from the start of recording until the minutes are final.
+struct LiveScreen {
+    let terminal: Terminal
+    let keys: Task<Void, Never>
+    let drawing: Task<Void, Never>
+
+    /// Takes over the terminal, or returns nil when it isn't interactive.
+    static func start(
+        live: LiveState, paused: PauseFlag, origin: UInt64, stop: AsyncStream<Void>.Continuation
+    ) -> LiveScreen? {
+        guard Terminal.isInteractive else { return nil }
+        let terminal = Terminal()
+        terminal.enterFullScreen()
+        let keys = Task {
+            for await key in terminal.keys() {
+                switch key {
+                case UInt8(ascii: "q"), UInt8(ascii: "Q"):
+                    stop.yield()
+                case UInt8(ascii: "p"), UInt8(ascii: "P"), UInt8(ascii: " "):
+                    let nowPaused = paused.toggle()
+                    live.update { $0.paused = nowPaused }
+                default:
+                    break
+                }
+            }
+        }
+        let drawing = Task {
+            while !Task.isCancelled {
+                live.update { if !$0.stopping { $0.elapsed = HostTime.seconds(from: origin, to: HostTime.now()) } }
+                let size = terminal.size
+                terminal.write(
+                    "\u{1B}[H" + LiveView.render(live.snapshot, columns: size.columns, rows: size.rows) + "\u{1B}[J")
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+        }
+        return LiveScreen(terminal: terminal, keys: keys, drawing: drawing)
+    }
+
+    /// Stops reacting to keys once the recording has stopped; the screen keeps drawing.
+    func stopKeys() {
+        terminal.stopReadingKeys()
+        keys.cancel()
+    }
+
+    /// Stops drawing and gives the terminal back.
+    func close() async {
+        drawing.cancel()
+        _ = await drawing.value
+        stopKeys()
+        terminal.leaveFullScreen()
+    }
 }

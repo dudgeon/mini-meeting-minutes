@@ -51,36 +51,42 @@ def write(path, samples):
         handle.writeframes(clipped.tobytes())
 
 
+def synthesize_call(directory, room_name="room.wav", remote_name="remote.wav"):
+    """Speaks SCRIPT with `say` voices into two tracks in `directory`: the room microphone
+    (with the call leaking in as speaker echo) and the call's system audio. Returns their paths."""
+    directory = Path(directory)
+    clips = []
+    for index, (_, voice, text) in enumerate(SCRIPT):
+        path = directory / f"line-{index}.wav"
+        subprocess.run(["say", "-v", voice, "-o", str(path), "--data-format=LEI16@16000", text], check=True)
+        clips.append(read(path))
+        path.unlink()
+
+    gap = int(0.8 * RATE)
+    total = sum(len(clip) + gap for clip in clips)
+    room = [0.0] * total
+    remote = [0.0] * total
+    position = 0
+    for (channel, _, _), clip in zip(SCRIPT, clips):
+        target = room if channel == "room" else remote
+        for offset, value in enumerate(clip):
+            target[position + offset] += value
+        position += len(clip) + gap
+    # Laptop speakers: the remote side reaches the microphone 25 ms later, 10 dB down, with reflections.
+    for delay_ms, gain in [(25, 0.32), (37, 0.12), (52, 0.07), (80, 0.04)]:
+        delay = delay_ms * RATE // 1000
+        for index in range(total - delay):
+            room[index + delay] += gain * remote[index]
+    write(directory / room_name, room)
+    write(directory / remote_name, remote)
+    return directory / room_name, directory / remote_name
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="mmm-e2e-") as scratch:
-        scratch = Path(scratch)
-        clips = []
-        for index, (_, voice, text) in enumerate(SCRIPT):
-            path = scratch / f"{index}.wav"
-            subprocess.run(["say", "-v", voice, "-o", str(path), "--data-format=LEI16@16000", text], check=True)
-            clips.append(read(path))
-
-        gap = int(0.8 * RATE)
-        total = sum(len(clip) + gap for clip in clips)
-        room = [0.0] * total
-        remote = [0.0] * total
-        position = 0
-        for (channel, _, _), clip in zip(SCRIPT, clips):
-            target = room if channel == "room" else remote
-            for offset, value in enumerate(clip):
-                target[position + offset] += value
-            position += len(clip) + gap
-        # Laptop speakers: the remote side reaches the microphone 25 ms later, 10 dB down, with reflections.
-        for delay_ms, gain in [(25, 0.32), (37, 0.12), (52, 0.07), (80, 0.04)]:
-            delay = delay_ms * RATE // 1000
-            for index in range(total - delay):
-                room[index + delay] += gain * remote[index]
-        write(scratch / "room.wav", room)
-        write(scratch / "remote.wav", remote)
-
+        room, remote = synthesize_call(scratch)
         result = subprocess.run(
-            [str(ROOT / "mmm"), "transcribe", "--room", str(scratch / "room.wav"),
-             "--remote", str(scratch / "remote.wav"), "--stdout"],
+            [str(ROOT / "mmm"), "transcribe", "--room", str(room), "--remote", str(remote), "--stdout"],
             capture_output=True, text=True, check=True)
     minutes = result.stdout
 

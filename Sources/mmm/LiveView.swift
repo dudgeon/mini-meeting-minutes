@@ -8,6 +8,7 @@ final class LiveState: Sendable {
         var elapsed: TimeInterval = 0
         var paused = false
         var stopping = false
+        var finished = false
         var levels: [Channel: Float] = [:]
         var sources: [Channel: String] = [:]
         var turns: [Turn] = []
@@ -51,9 +52,11 @@ enum LiveView {
         var header: [String] = []
 
         let recording =
-            state.stopping
-            ? Style.yellow("■ finishing")
-            : state.paused ? Style.yellow("❚❚ paused") : Style.red("●") + " recording"
+            state.finished
+            ? Style.green("■ done")
+            : state.stopping
+                ? Style.yellow("■ finishing")
+                : state.paused ? Style.yellow("❚❚ paused") : Style.red("●") + " recording"
         let flags = [
             state.redaction ? "redaction on" : "redaction off",
             state.echoCancellation ? "echo cancel on" : nil,
@@ -77,15 +80,29 @@ enum LiveView {
                 (index == 0 ? " " + Style.yellow("!") + " " : "   ") + line
             })
         }
-        footer.append(
-            " " + Style.dim("Saving to \(abbreviate(state.outputPath))") + "   "
-                + Style.bold("p") + " pause  " + Style.bold("q") + " stop & save")
+        let hint =
+            state.finished
+            ? "Speaker labels are final. Next, name the speakers."
+            : state.stopping
+                ? "Finishing: attributing the last words and checking every speaker…"
+                : Style.bold("p") + " pause  " + Style.bold("q") + " stop & save"
+        let room = width - 1 - "Saving to ".count - 3 - hint.visibleWidth
+        let saving = room >= 12 ? Style.dim("Saving to " + fit(abbreviate(state.outputPath), room)) + "   " : ""
+        footer.append(" " + saving + hint)
 
         let available = max(rows - header.count - footer.count, 1)
         let body = transcriptLines(state, width: width).suffix(available)
         let padding = Array(repeating: "", count: available - body.count)
 
-        return (header + padding + body + footer).map { $0 + "\u{1B}[K" }.joined(separator: "\n")
+        return (header + padding + body + footer).map { $0.truncated(toVisibleWidth: width) + "\u{1B}[K" }
+            .joined(separator: "\n")
+    }
+
+    /// Shortens a path to `width` characters: first to just its file name, then that name's end.
+    static func fit(_ path: String, _ width: Int) -> String {
+        guard path.count > width else { return path }
+        let name = "…/" + (path as NSString).lastPathComponent
+        return name.count <= width ? name : "…" + name.suffix(max(width - 1, 0))
     }
 
     private static func transcriptLines(_ state: LiveState.Snapshot, width: Int) -> [String] {

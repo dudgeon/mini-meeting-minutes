@@ -73,7 +73,7 @@ enum Setup {
     }
 
     /// After a recording: says where the minutes are and offers to open them.
-    static func finished(_ url: URL, turns: Int, speakers: Int) {
+    static func finished(_ url: URL, turns: Int, speakers: Int, offerToOpen: Bool = true) {
         let minutesFolder = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/Minutes").path
         let place =
@@ -82,7 +82,7 @@ enum Setup {
         print("")
         print(Style.green("✓ Saved your minutes") + "  " + Style.dim("(\(turns) turns, \(speakers) speakers)"))
         print("  " + place)
-        guard Terminal.isInteractive else { return }
+        guard offerToOpen, Terminal.isInteractive else { return }
         if ask("\nPress Return to open them, or close this window.") != nil {
             // TextEdit is on every Mac; the minutes are plain text with light markdown.
             run("/usr/bin/open", ["-e", url.path])

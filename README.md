@@ -8,6 +8,11 @@ blanked out.
 - **Private.** Nothing leaves your Mac and the audio is never saved. Only the written minutes are.
 - **Word for word.** No AI summaries: the minutes are exactly what was said.
 
+![Mini Meeting Minutes recording a meeting: what people say appears as they say it, then each line is attributed to a speaker, with names, email addresses and phone numbers blanked out](docs/demo.gif)
+
+*A short meeting (made with macOS voices) running through Mini Meeting Minutes, shown about four
+times faster than real time.* The minutes it saves look like this:
+
 ```markdown
 **Room 1** · 00:00:17
 That is concerning. Can you send me the full breakdown? My email is [EMAIL].
@@ -209,7 +214,7 @@ permissions. The installer honors `MMM_REPO`, `MMM_BRANCH` and `MMM_HOME` for te
 | `Sources/mmm/` | Command line, first-run setup and live screen |
 | `Models/` | Vendored Core ML models; see [Models/README.md](Models/README.md) |
 | `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (end-to-end check with `say` voices); maintainer tools `vendor_models.py` (models) and `generate_first_names.py` (name list) |
+| `scripts/` | `e2e_check.py` (end-to-end check with `say` voices); maintainer tools `vendor_models.py` (models), `generate_first_names.py` (name list) and `record_demo.py` (the README animation, `docs/demo.gif`) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.
