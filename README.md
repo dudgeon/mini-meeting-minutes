@@ -154,6 +154,7 @@ FluidAudio's model downloader is switched off. Building needs the network to fet
 ```sh
 swift build --disable-keychain                 # debug build
 swift test --disable-keychain                  # tests; see the note below
+python3 scripts/e2e_check.py                   # a synthetic call through the whole pipeline
 MMM_DEBUG=1 ./mmm transcribe --room a.wav      # print utterances (unredacted), windows, speaker matching
 ```
 
@@ -172,7 +173,7 @@ permissions.
 | `Sources/MinutesCore/Transcript/` | Turns and the markdown document |
 | `Sources/mmm/` | Command line and live screen |
 | `Models/` | Vendored Core ML models; see [Models/README.md](Models/README.md) |
-| `scripts/` | Maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (name list) |
+| `scripts/` | `e2e_check.py` (end-to-end check with `say` voices); maintainer tools `vendor_models.py` (models) and `generate_first_names.py` (name list) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support. Model licenses and attribution are in
