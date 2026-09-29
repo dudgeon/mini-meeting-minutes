@@ -80,7 +80,6 @@ struct Transcribe: AsyncParsableCommand {
         if !minutes.noNames { document.names = promptForNames(document) }
         let url = minutes.outputURL(startedAt: startDate)
         try document.write(to: url)
-        print(Style.green("Saved") + " \(LiveView.abbreviate(url.path))  "
-            + Style.dim("(\(turns.count) turns, \(document.speakers.count) speakers)"))
+        Setup.finished(url, turns: turns.count, speakers: document.speakers.count)
     }
 }

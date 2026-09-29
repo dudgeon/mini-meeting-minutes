@@ -35,11 +35,11 @@ struct Record: AsyncParsableCommand {
 
     func run() async throws {
         let redaction = try minutes.redactionCategories()
-        let models = try loadModels()
-
         var channels = Set(Channel.allCases)
         if noMic || (replaying && replayRoom == nil) { channels.remove(.room) }
         if noSystem || (replaying && replayRemote == nil) { channels.remove(.remote) }
+        if !replaying { channels = try Setup.prepare(channels) }
+        let models = try loadModels()
         let session = try await MeetingSession(
             models: models,
             configuration: MeetingSession.Configuration(
@@ -95,6 +95,11 @@ struct Record: AsyncParsableCommand {
             do {
                 try await capture.start()
                 microphone = capture
+            } catch MicrophoneCapture.CaptureError.permissionDenied {
+                try Setup.blocked(
+                    "Mini Meeting Minutes isn't allowed to use the microphone.",
+                    fix: "In System Settings › Privacy & Security › Microphone, turn on \(Setup.hostApp).",
+                    settings: Setup.microphoneSettings)
             } catch {
                 throw RecordError.capture("microphone", error)
             }
@@ -169,8 +174,7 @@ struct Record: AsyncParsableCommand {
             redaction: redaction, echoCancellation: echo, turns: turns, inProgress: false)
         if !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
-        print("\n" + Style.green("Saved") + " \(LiveView.abbreviate(outputURL.path))  "
-            + Style.dim("(\(turns.count) turns, \(document.speakers.count) speakers)"))
+        Setup.finished(outputURL, turns: turns.count, speakers: document.speakers.count)
     }
 
     /// Shows the live screen until the user stops the recording (q or Ctrl-C).

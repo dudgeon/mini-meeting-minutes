@@ -87,7 +87,8 @@ func loadModels() throws -> LoadedModels {
 func promptForNames(_ document: MinutesDocument) -> [SpeakerID: String] {
     let speakers = document.speakers
     guard !speakers.isEmpty, Terminal.isInteractive else { return [:] }
-    print("\n" + Style.bold("Name the speakers") + Style.dim(" (Enter keeps the label; the same name merges speakers)"))
+    print("\n" + Style.bold("Who was speaking?") + " Type a name and press Return, or just press Return to skip.")
+    print(Style.dim("Giving two speakers the same name combines them."))
     var names: [SpeakerID: String] = [:]
     for speaker in speakers {
         let sample = document.turns.filter { $0.speaker == speaker }.max { $0.text.count < $1.text.count }?.text ?? ""

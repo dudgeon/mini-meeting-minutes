@@ -21,12 +21,50 @@ Exact revisions and per-file SHA-256 checksums are in [`manifest.json`](manifest
   BUT Speech@FIT. Converted to Core ML (fixed input shapes, mixed-precision weights, FBank front end
   split from the embedding model) by Fluid Inference. See the source repository's NOTICE.md.
 - **Silero VAD** by Silero Team; Core ML conversion by Fluid Inference.
-- **LocalVQE** by LocalAI, derived from DeepVQE (Indenbom et al., Interspeech 2023); Core ML
-  conversion by Fluid Inference.
+- **LocalVQE** by Richard Sherwood Palethorpe (LocalAI), derived from DeepVQE (Indenbom et al.,
+  Interspeech 2023); Core ML conversion by Fluid Inference.
 
 The first-name list used for redaction (`Sources/MinutesCore/Redaction/FirstNames.swift`) is
 derived from US Social Security Administration baby-name data (public domain), via the CC0
 [babynames](https://github.com/hadley/babynames) R package.
+
+## License texts
+
+The MIT license in the repository root covers this project's code, not these models. Each model
+keeps its own license:
+
+- CC-BY-4.0 (Parakeet Redux, speaker diarization): https://creativecommons.org/licenses/by/4.0/
+- MIT (Silero VAD): [`licenses/silero-vad-MIT.txt`](licenses/silero-vad-MIT.txt)
+- Apache-2.0 (LocalVQE): [`licenses/localvqe-Apache-2.0.txt`](licenses/localvqe-Apache-2.0.txt)
+
+## Citations
+
+The speaker diarization models ask that these be kept with them.
+
+```bibtex
+@inproceedings{Plaquet23,
+  author={Alexis Plaquet and Hervé Bredin},
+  title={{Powerset multi-class cross entropy loss for neural speaker diarization}},
+  year=2023,
+  booktitle={Proc. INTERSPEECH 2023},
+}
+
+@inproceedings{Wang2023,
+  title={Wespeaker: A research and production oriented speaker embedding learning toolkit},
+  author={Wang, Hongji and Liang, Chengdong and Wang, Shuai and Chen, Zhengyang and Zhang, Binbin and Xiang, Xu and Deng, Yanlei and Qian, Yanmin},
+  booktitle={ICASSP 2023, IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  pages={1--5},
+  year={2023},
+  organization={IEEE}
+}
+
+@article{Landini2022,
+  author={Landini, Federico and Profant, J{\'a}n and Diez, Mireia and Burget, Luk{\'a}{\v{s}}},
+  title={{Bayesian HMM clustering of x-vector sequences (VBx) in speaker diarization: theory, implementation and analysis on standard tasks}},
+  year={2022},
+  journal={Computer Speech & Language},
+}
+```
 
 ## Why some files are split
 
