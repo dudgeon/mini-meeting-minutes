@@ -37,5 +37,9 @@ let package = Package(
             name: "MinutesCoreTests",
             dependencies: ["MinutesCore"]
         ),
+        .testTarget(
+            name: "mmmTests",
+            dependencies: ["mmm", "MinutesCore"]
+        ),
     ]
 )

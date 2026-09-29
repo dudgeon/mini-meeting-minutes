@@ -15,6 +15,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -24,10 +26,10 @@ from e2e_check import synthesize_call  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "demo.gif"
-COLUMNS, ROWS = 100, 24
+COLUMNS, ROWS = 120, 42  # the size the Desktop shortcut opens Terminal at
 CELL_W, CELL_H, TITLE_H = 9, 19, 30
-FRAME_STEP = 3  # the screen redraws about every 150 ms; keep every third frame...
-FRAME_MS = 110  # ...and play them back about four times faster than real time
+FRAME_STEP = 8  # the screen draws every ~50 ms; keep every eighth frame...
+FRAME_MS = 100  # ...and play them back about four times faster than real time
 FINAL_HOLD_MS = 4000
 
 FONT = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 15, index=0)
@@ -47,59 +49,130 @@ def xterm_256(index):
     return gray, gray, gray
 
 
-def parse_frames(screen):
-    """Splits the recorded output into frames (each starts with cursor-home) and replays the
-    escape sequences mmm uses into a grid of (character, color, bold, dim) cells."""
-    frames = []
-    for chunk in screen.split("\x1b[H")[1:]:
-        chunk = chunk.split("\x1b[?1049l")[0]
-        grid = [[(" ", None, False, False)] * COLUMNS for _ in range(ROWS)]
-        x = y = 0
-        color, bold, dim = None, False, False
+class Emulator:
+    """Just enough of a terminal to replay what mmm draws: cursor moves, colors (truecolor and
+    256), erases, and synchronized updates, which mark where each frame ends."""
+
+    def __init__(self):
+        self.blank = (" ", FOREGROUND, BACKGROUND, False)
+        self.grid = [[self.blank] * COLUMNS for _ in range(ROWS)]
+        self.x = self.y = 0
+        self.fg, self.bg, self.bold = FOREGROUND, BACKGROUND, False
+        self.frames = []
+
+    def sgr(self, codes):
+        index = 0
+        while index < len(codes):
+            code = codes[index]
+            if code == 0:
+                self.fg, self.bg, self.bold = FOREGROUND, BACKGROUND, False
+            elif code == 1:
+                self.bold = True
+            elif code == 22:
+                self.bold = False
+            elif 30 <= code <= 37:
+                self.fg = ANSI.get(code - 30, FOREGROUND)
+            elif code == 39:
+                self.fg = FOREGROUND
+            elif code == 49:
+                self.bg = BACKGROUND
+            elif code in (38, 48) and index + 1 < len(codes):
+                if codes[index + 1] == 2 and index + 4 < len(codes):
+                    color = tuple(codes[index + 2:index + 5])
+                    index += 4
+                elif codes[index + 1] == 5 and index + 2 < len(codes):
+                    color = xterm_256(codes[index + 2])
+                    index += 2
+                else:
+                    color = FOREGROUND
+                if code == 38:
+                    self.fg = color
+                else:
+                    self.bg = color
+            index += 1
+
+    def feed(self, text):
         position = 0
-        while position < len(chunk):
-            char = chunk[position]
+        while position < len(text):
+            char = text[position]
             if char == "\x1b":
-                match = re.match(r"\x1b\[([0-9;?]*)([A-Za-z])", chunk[position:])
+                osc = re.match(r"\x1b\][^\x07]*\x07", text[position:])
+                if osc:
+                    position += len(osc.group(0))
+                    continue
+                match = re.match(r"\x1b\[([0-9;?<]*)([A-Za-z])", text[position:])
                 if not match:
                     position += 1
                     continue
                 params, command = match.groups()
-                if command == "m":
-                    codes = [int(code) for code in params.split(";") if code.isdigit()] or [0]
-                    index = 0
-                    while index < len(codes):
-                        code = codes[index]
-                        if code == 0:
-                            color, bold, dim = None, False, False
-                        elif code == 1:
-                            bold = True
-                        elif code == 2:
-                            dim = True
-                        elif 30 <= code <= 37:
-                            color = ANSI.get(code - 30, FOREGROUND)
-                        elif code == 38 and index + 2 < len(codes) and codes[index + 1] == 5:
-                            color = xterm_256(codes[index + 2])
-                            index += 2
-                        index += 1
-                elif command == "K" and y < ROWS:
-                    for column in range(x, COLUMNS):
-                        grid[y][column] = (" ", None, False, False)
                 position += len(match.group(0))
+                if params.startswith("?"):
+                    if params == "?2026" and command == "l":
+                        self.frames.append([row[:] for row in self.grid])
+                    continue
+                numbers = [int(n) for n in params.split(";") if n.isdigit()]
+                if command == "m":
+                    self.sgr(numbers or [0])
+                elif command == "H":
+                    self.y = (numbers[0] - 1) if numbers else 0
+                    self.x = (numbers[1] - 1) if len(numbers) > 1 else 0
+                elif command == "J" and numbers[:1] == [2]:
+                    self.grid = [[(" ", self.fg, self.bg, False)] * COLUMNS for _ in range(ROWS)]
+                elif command == "K" and self.y < ROWS:
+                    for column in range(self.x, COLUMNS):
+                        self.grid[self.y][column] = (" ", self.fg, self.bg, False)
                 continue
             if char == "\r":
-                x = 0
+                self.x = 0
             elif char == "\n":
-                x, y = 0, y + 1
-            elif y < ROWS and x < COLUMNS:
-                grid[y][x] = (char, color, bold, dim)
-                x += 1
+                self.x, self.y = 0, min(ROWS - 1, self.y + 1)
+            elif 0 <= self.y < ROWS and 0 <= self.x < COLUMNS:
+                self.grid[self.y][self.x] = (char, self.fg, self.bg, self.bold)
+                self.x = min(COLUMNS - 1, self.x + 1) if self.x < COLUMNS - 1 else COLUMNS
             position += 1
-        frames.append(grid)
-    return frames
 
 
-def render(grid):
+# Characters a terminal draws as shapes rather than font glyphs, as fractions of the cell.
+BLOCKS = {"█": (0, 0, 1, 1), "▀": (0, 0, 1, .5), "▄": (0, .5, 1, 1), "▌": (0, 0, .5, 1), "▐": (.5, 0, 1, 1),
+          "▔": (0, 0, 1, 1 / 8), "▏": (0, 0, 1 / 8, 1), "▕": (7 / 8, 0, 1, 1), "▆": (0, 2 / 8, 1, 1)}
+for eighth in range(1, 8):
+    BLOCKS[" ▁▂▃▄▅▆▇"[eighth]] = (0, 1 - eighth / 8, 1, 1)
+
+
+def draw_cell(draw, x0, y0, char, fg):
+    w, h = CELL_W, CELL_H
+    if char in BLOCKS:
+        a, b, c, d = BLOCKS[char]
+        draw.rectangle([x0 + a * w, y0 + b * h, x0 + c * w - 1, y0 + d * h - 1], fill=fg)
+    elif char == "░":
+        for py in range(y0, y0 + h, 3):
+            for px in range(x0 + (py // 3) % 2, x0 + w, 3):
+                draw.point((px, py), fill=fg)
+    elif char == "═":
+        draw.line([x0, y0 + h // 2 - 2, x0 + w, y0 + h // 2 - 2], fill=fg)
+        draw.line([x0, y0 + h // 2 + 2, x0 + w, y0 + h // 2 + 2], fill=fg)
+    elif char == "┃":
+        draw.rectangle([x0 + w // 2 - 1, y0, x0 + w // 2, y0 + h], fill=fg)
+    elif char == "●":
+        draw.ellipse([x0 + 1, y0 + h / 2 - 4, x0 + w - 2, y0 + h / 2 + 3], fill=fg)
+    elif char == "■":
+        draw.rectangle([x0 + 1, y0 + h / 2 - 4, x0 + w - 2, y0 + h / 2 + 3], fill=fg)
+    elif char == "❚":
+        draw.rectangle([x0 + 2, y0 + 4, x0 + w - 3, y0 + h - 5], fill=fg)
+    elif char == "◆":
+        cx, cy = x0 + w / 2, y0 + h / 2
+        draw.polygon([(cx, cy - 4), (cx + 4, cy), (cx, cy + 4), (cx - 4, cy)], fill=fg)
+    elif char in "▼▸":
+        cx, cy = x0 + w / 2, y0 + h / 2
+        points = [(cx - 4, cy - 3), (cx + 4, cy - 3), (cx, cy + 4)] if char == "▼" else [
+            (cx - 3, cy - 4), (cx + 4, cy), (cx - 3, cy + 4)]
+        draw.polygon(points, fill=fg)
+    else:
+        return False
+    return True
+
+
+def render(grid, bold_font=BOLD):
     width, height = COLUMNS * CELL_W + 24, ROWS * CELL_H + TITLE_H + 12
     image = Image.new("RGB", (width, height), BACKGROUND)
     draw = ImageDraw.Draw(image)
@@ -109,22 +182,48 @@ def render(grid):
     draw.text((width / 2, TITLE_H / 2), "Mini Meeting Minutes", font=FONT, fill=(139, 148, 158), anchor="mm")
     top, left = TITLE_H + 6, 12
     for row, cells in enumerate(grid):
-        for column, (char, color, bold, dim) in enumerate(cells):
-            if char == " ":
-                continue
-            fg = color or FOREGROUND
-            if dim:
-                fg = tuple(int(c * 0.55 + b * 0.45) for c, b in zip(fg, BACKGROUND))
+        for column, (char, fg, bg, bold) in enumerate(cells):
             x0, y0 = left + column * CELL_W, top + row * CELL_H
-            if char in "▁▂▃▄▅▆▇█":
-                eighths = "▁▂▃▄▅▆▇█".index(char) + 1
-                draw.rectangle([x0, y0 + CELL_H * (8 - eighths) / 8, x0 + CELL_W - 1, y0 + CELL_H - 1], fill=fg)
-            elif char == "─":
-                draw.line([x0, y0 + CELL_H // 2, x0 + CELL_W, y0 + CELL_H // 2], fill=fg)
-            else:
-                draw.text((x0 + CELL_W / 2, y0 + CELL_H / 2 + 1), char, font=BOLD if bold else FONT, fill=fg,
-                          anchor="mm")
+            if bg != BACKGROUND:
+                draw.rectangle([x0, y0, x0 + CELL_W - 1, y0 + CELL_H - 1], fill=bg)
+            if char == " " or draw_cell(draw, x0, y0, char, fg):
+                continue
+            draw.text((x0 + CELL_W / 2, y0 + CELL_H / 2 + 1), char, font=bold_font if bold else FONT, fill=fg,
+                      anchor="mm")
     return image
+
+
+# Keys pressed during the demo, by seconds after the screen appears: show the oscilloscope, then
+# the spectrum again, and the synthwave skin for a while.
+KEYS = [(20, "v"), (26, "v"), (26.3, "v"), (31, "k"), (40, "k")]
+NAMES = ["Samantha", "Daniel", "Karen"]
+
+
+def wait_for(path, text, timeout=180):
+    """Waits until `text` shows up in the recorded screen output."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists() and text in path.read_text(errors="replace"):
+            return
+        time.sleep(0.1)
+    raise TimeoutError(f"{text!r} never appeared on screen")
+
+
+def type_keys(process, typescript):
+    wait_for(typescript, "MINI·MEETING·MINUTES")
+    start = time.time()
+    for at, key in KEYS:
+        time.sleep(max(0, start + at - time.time()))
+        process.stdin.write(key.encode())
+        process.stdin.flush()
+    wait_for(typescript, "SPEAKING")  # the renderer only redraws changed cells, so match a fragment
+    time.sleep(1.2)
+    for name in NAMES:
+        for char in name + "\r":
+            process.stdin.write(char.encode())
+            process.stdin.flush()
+            time.sleep(0.12)
+        time.sleep(0.6)
 
 
 def main():
@@ -134,15 +233,25 @@ def main():
         room, remote = synthesize_call(scratch, "meeting-room.wav", "meeting-call.wav")
         typescript = scratch / "screen.txt"
         command = (f"stty rows {ROWS} cols {COLUMNS}; exec '{ROOT / 'mmm'}' record --replay-room '{room}' "
-                   f"--replay-remote '{remote}' --no-names --title 'Planning review' --output '{scratch}/'")
-        subprocess.run(
+                   f"--replay-remote '{remote}' --title 'Planning review' --output '{scratch}/'")
+        process = subprocess.Popen(
             ["script", "-q", str(typescript), "/bin/bash", "-c", command],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, check=True,
-            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home()), "TERM": "xterm-256color"})
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home()), "TERM": "xterm-256color",
+                 "COLORTERM": "truecolor"})
+        typist = threading.Thread(target=type_keys, args=(process, typescript), daemon=True)
+        typist.start()
+        if process.wait(timeout=300) != 0:
+            raise SystemExit("mmm record failed")
         screen = typescript.read_text(errors="replace")
 
-    frames = parse_frames(screen)
-    kept = frames[::FRAME_STEP] + [frames[-1]]
+    emulator = Emulator()
+    emulator.feed(screen)
+    frames = emulator.frames
+    # Four times real time while recording; real time once the naming dialog opens.
+    naming = next((index for index, grid in enumerate(frames)
+                   if "WHO WAS SPEAKING?" in "".join(cell[0] for row in grid for cell in row)), len(frames))
+    kept = frames[:naming:FRAME_STEP] + frames[naming::2] + [frames[-1]]
     rendered = [render(grid) for grid in kept]
     # One palette for every frame, built from a spread of frames, so colors never shift.
     samples = rendered[:: max(1, len(rendered) // 6)] + [rendered[-1]]

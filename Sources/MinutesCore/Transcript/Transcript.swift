@@ -42,6 +42,12 @@ public struct SegmentKey: Hashable, Sendable {
     public let channel: Channel
     public let window: Int
     public let segment: Int
+
+    public init(channel: Channel, window: Int, segment: Int) {
+        self.channel = channel
+        self.window = window
+        self.segment = segment
+    }
 }
 
 /// Consecutive speech attributed to one speaker. `text` is already redacted when redaction is on.

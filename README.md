@@ -10,8 +10,9 @@ blanked out.
 
 ![Mini Meeting Minutes recording a meeting: what people say appears as they say it, then each line is attributed to a speaker, with names, email addresses and phone numbers blanked out](docs/demo.gif)
 
-*A short meeting (made with macOS voices) running through Mini Meeting Minutes, shown about four
-times faster than real time.* The minutes it saves look like this:
+*A short meeting (made with macOS voices) running through Mini Meeting Minutes about four times
+faster than real time: the oscilloscope and synthwave skin make an appearance, and the speakers get
+named at the end.* The minutes it saves look like this:
 
 ```markdown
 **Room 1** · 00:00:17
@@ -81,14 +82,28 @@ mmm --output ~/Notes/                # a folder, or a file name ending in .md
 mmm doctor                           # check the models, permissions and microphones
 ```
 
-While recording, the screen shows the live transcript. New speech appears within a few seconds;
-speaker labels usually follow within 30 seconds, once that stretch of audio has been analyzed.
-Press **p** to pause (audio is dropped, not buffered) and **q** or Ctrl-C to stop.
+While recording, the screen shows a clock, live spectrum analyzers for the microphone and system
+audio, how much audio is waiting in memory, each speaker's share of the talking, who spoke when,
+and the transcript. New speech appears within a few seconds; speaker labels usually follow within
+30 seconds, once that stretch of audio has been analyzed.
+
+| Key | Does |
+|---|---|
+| **Space** | Pause or resume (paused audio is dropped, not buffered) |
+| **Q** or Ctrl-C | Stop and save |
+| **N** | Name the speakers, any time |
+| **V** | Switch the visualizer: spectrum, oscilloscope, off |
+| **K** | Switch the skin: classic or synthwave |
+| **↑ ↓**, Page Up/Down, mouse wheel | Scroll the transcript; **F** jumps back to the newest line |
+| **?** | Help |
+
+The buttons are clickable too. Because the screen takes mouse clicks, hold **⌥ Option** to select
+text with the mouse. Windows smaller than 100×36 get a more compact screen.
 
 When you stop, `mmm` re-examines every speaker across the whole meeting, which can renumber a few
-labels, then asks you to name each speaker, showing something they said. The minutes are written
-to `~/Documents/Minutes/` and kept up to date during the meeting, so a crash loses at most the
-last minute or so.
+labels (names you gave follow the right person), then asks you to name each speaker, showing
+something they said. The minutes are written to `~/Documents/Minutes/` and kept up to date during
+the meeting, so a crash loses at most the last minute or so.
 
 | Option | Effect |
 |---|---|
@@ -96,6 +111,7 @@ last minute or so.
 | `--no-echo-cancel` | Skip echo cancellation. It's only needed when the call plays through speakers; with headphones you can turn it off. |
 | `--mic-device <uid>` | Use a specific microphone. `mmm doctor` lists them. |
 | `--no-names` | Don't ask for speaker names at the end. |
+| `--skin <name>` | Start with the `classic` (default) or `synthwave` skin. |
 
 To transcribe recordings you already have (they're only read, never changed):
 
@@ -211,7 +227,8 @@ permissions. The installer honors `MMM_REPO`, `MMM_BRANCH` and `MMM_HOME` for te
 | `Sources/MinutesCore/Pipeline/` | Session, per-channel pipeline, echo cancellation, speaker embedding and matching |
 | `Sources/MinutesCore/Redaction/` | PII redaction |
 | `Sources/MinutesCore/Transcript/` | Turns and the markdown document |
-| `Sources/mmm/` | Command line, first-run setup and live screen |
+| `Sources/mmm/` | Command line and first-run setup |
+| `Sources/mmm/Retro/` | The recording screen: renderer, skins, visualizer, input and layout |
 | `Models/` | Vendored Core ML models; see [Models/README.md](Models/README.md) |
 | `install.sh` | The one-line installer |
 | `scripts/` | `e2e_check.py` (end-to-end check with `say` voices); maintainer tools `vendor_models.py` (models), `generate_first_names.py` (name list) and `record_demo.py` (the README animation, `docs/demo.gif`) |

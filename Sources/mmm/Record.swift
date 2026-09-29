@@ -22,6 +22,9 @@ struct Record: AsyncParsableCommand {
     @Option(help: "Core Audio UID of the input device to use instead of the system default.")
     var micDevice: String?
 
+    @Option(help: "How the recording screen looks: classic or synthwave. Press K to switch while recording.")
+    var skin: SkinName = .classic
+
     // Testing aids: play files through the live path instead of capturing.
     @Option(help: .hidden) var replayRoom: String?
     @Option(help: .hidden) var replayRemote: String?
@@ -50,8 +53,11 @@ struct Record: AsyncParsableCommand {
         let outputURL = minutes.outputURL(startedAt: startDate)
         let live = LiveState()
         live.update {
+            $0.title = minutes.title(startedAt: startDate)
             $0.outputPath = outputURL.path
             $0.redaction = !redaction.isEmpty
+            $0.channels = channels
+            $0.skin = Skin.all.firstIndex { $0.name == skin.rawValue } ?? 0
         }
         let echo = await session.echoCancellationEnabled
         live.update { $0.echoCancellation = echo }
@@ -62,7 +68,7 @@ struct Record: AsyncParsableCommand {
         func deliver(_ channel: Channel) -> @Sendable ([Float], UInt64) -> Void {
             { samples, hostTime in
                 let chunk = AudioChunk(samples: samples, time: HostTime.seconds(from: origin, to: hostTime))
-                live.update { $0.levels[channel] = chunk.rms }
+                live.listen(channel, samples, level: chunk.rms)
                 if !paused.isPaused { feedInput.yield((channel, chunk)) }
             }
         }
@@ -168,8 +174,7 @@ struct Record: AsyncParsableCommand {
         for await _ in stops { break }
 
         // Stop capturing, let the pipeline drain, then relabel speakers across the whole meeting.
-        // The screen stays up meanwhile, and shows the final labels before it closes.
-        screen?.stopKeys()
+        // The screen stays up meanwhile and shows the final labels.
         live.update { $0.stopping = true }
         microphone?.stop()
         system?.stop()
@@ -179,12 +184,20 @@ struct Record: AsyncParsableCommand {
         try await processing.value
         let turns = try await session.finish()
         _ = await updates.value
+        let names = Self.carryNames(from: live.snapshot, to: turns)
         live.update {
             $0.turns = turns
             $0.pending = [:]
+            $0.names = names
             $0.finished = true
         }
+
+        let speakers = MinutesDocument(
+            title: "", startDate: startDate, sources: [:], redaction: [], echoCancellation: false, turns: turns
+        ).speakers
         if let screen {
+            if !minutes.noNames && !speakers.isEmpty { await screen.askForNames(speakers) }
+            // Leave the final transcript, with names, on screen for a moment.
             try? await Task.sleep(for: .seconds(2))
             await screen.close()
         }
@@ -193,11 +206,26 @@ struct Record: AsyncParsableCommand {
         var document = MinutesDocument(
             title: minutes.title(startedAt: startDate), startDate: startDate,
             duration: HostTime.seconds(from: origin, to: HostTime.now()), sources: snapshot.sources,
-            redaction: redaction, echoCancellation: echo, turns: turns, inProgress: false)
-        if !minutes.noNames { document.names = promptForNames(document) }
+            redaction: redaction, echoCancellation: echo, turns: turns, names: snapshot.names, inProgress: false)
+        if screen == nil && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
         // Replays are automated (tests, the README demo): don't wait for a key.
         Setup.finished(outputURL, turns: turns.count, speakers: document.speakers.count, offerToOpen: !replaying)
+    }
+
+    /// Names given during the meeting belong to live labels, which the final relabeling can
+    /// renumber. Each name moves to the final label that most of that speaker's speech ended up with.
+    static func carryNames(from live: LiveState.Snapshot, to turns: [Turn]) -> [SpeakerID: String] {
+        let finalLabel = Dictionary(turns.map { ($0.origin, $0.speaker) }, uniquingKeysWith: { first, _ in first })
+        var names: [SpeakerID: String] = [:]
+        for (speaker, name) in live.names where !name.trimmingCharacters(in: .whitespaces).isEmpty {
+            var votes: [SpeakerID: Double] = [:]
+            for turn in live.turns where turn.speaker == speaker {
+                if let label = finalLabel[turn.origin] { votes[label, default: 0] += max(turn.end - turn.start, 0.1) }
+            }
+            if let label = votes.max(by: { $0.value < $1.value })?.key, names[label] == nil { names[label] = name }
+        }
+        return names
     }
 
     /// Plays the replay files through the live path in real time (times `replaySpeed`), then
@@ -224,7 +252,7 @@ struct Record: AsyncParsableCommand {
                 guard let index = candidates.min(by: { next[$0]!.time < next[$1]!.time }), let chunk = next[index]
                 else { break }
                 try await Task.sleep(until: start + .seconds(chunk.time / speed), clock: .continuous)
-                live.update { $0.levels[readers[index].0] = chunk.rms }
+                live.listen(readers[index].0, chunk.samples, level: chunk.rms)
                 if !paused.isPaused { feed.yield((readers[index].0, chunk)) }
                 next[index] = try readers[index].1.next()
             }
@@ -264,11 +292,14 @@ struct UncheckedBox<Value>: @unchecked Sendable {
     init(_ value: Value) { self.value = value }
 }
 
-/// The full-screen live view: drawn from the start of recording until the minutes are final.
+/// The full-screen recording screen: drawn from the start of the recording until the minutes
+/// are final, reacting to keys and clicks throughout.
 struct LiveScreen {
     let terminal: Terminal
+    let live: LiveState
     let keys: Task<Void, Never>
     let drawing: Task<Void, Never>
+    let namesDone: AsyncStream<Void>
 
     /// Takes over the terminal, or returns nil when it isn't interactive.
     static func start(
@@ -277,42 +308,161 @@ struct LiveScreen {
         guard Terminal.isInteractive else { return nil }
         let terminal = Terminal()
         terminal.enterFullScreen()
+        let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
         let keys = Task {
             for await key in terminal.keys() {
-                switch key {
-                case UInt8(ascii: "q"), UInt8(ascii: "Q"):
-                    stop.yield()
-                case UInt8(ascii: "p"), UInt8(ascii: "P"), UInt8(ascii: " "):
-                    let nowPaused = paused.toggle()
-                    live.update { $0.paused = nowPaused }
-                default:
-                    break
-                }
+                handle(key, live: live, paused: paused, stop: stop, finishNaming: finishNaming)
             }
         }
         let drawing = Task {
+            let screen = Screen()
+            let analyzers: [Channel: SpectrumAnalyzer] = [.room: SpectrumAnalyzer(), .remote: SpectrumAnalyzer()]
+            let clock = ContinuousClock()
+            let start = clock.now
+            var previous = start
             while !Task.isCancelled {
+                let now = clock.now
+                let interval = Self.seconds(now - previous)
+                previous = now
                 live.update { if !$0.stopping { $0.elapsed = HostTime.seconds(from: origin, to: HostTime.now()) } }
+                let snapshot = live.snapshot
                 let size = terminal.size
-                terminal.write(
-                    "\u{1B}[H" + LiveView.render(live.snapshot, columns: size.columns, rows: size.rows) + "\u{1B}[J")
-                try? await Task.sleep(for: .milliseconds(150))
+                let (canvas, maxScroll) = RetroView.render(
+                    snapshot, skin: Skin.all[snapshot.skin % Skin.all.count], analyzers: analyzers,
+                    width: size.columns, height: size.rows, time: Self.seconds(now - start), frameInterval: interval)
+                live.update {
+                    $0.regions = canvas.regions
+                    $0.maxScroll = maxScroll
+                    $0.scroll = min($0.scroll, maxScroll)
+                }
+                terminal.write(screen.frame(canvas))
+                try? await Task.sleep(for: .milliseconds(50))
             }
         }
-        return LiveScreen(terminal: terminal, keys: keys, drawing: drawing)
+        return LiveScreen(terminal: terminal, live: live, keys: keys, drawing: drawing, namesDone: namesDone)
     }
 
-    /// Stops reacting to keys once the recording has stopped; the screen keeps drawing.
-    func stopKeys() {
-        terminal.stopReadingKeys()
-        keys.cancel()
+    /// Shows the naming dialog for the final speakers and waits until it is closed.
+    func askForNames(_ speakers: [SpeakerID]) async {
+        live.update { $0.naming = LiveState.Naming(speakers: speakers, final: true) }
+        for await _ in namesDone { break }
     }
 
     /// Stops drawing and gives the terminal back.
     func close() async {
         drawing.cancel()
         _ = await drawing.value
-        stopKeys()
+        terminal.stopReadingKeys()
+        keys.cancel()
         terminal.leaveFullScreen()
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+    }
+
+    // MARK: Input
+
+    private static func handle(
+        _ key: Key, live: LiveState, paused: PauseFlag, stop: AsyncStream<Void>.Continuation,
+        finishNaming: AsyncStream<Void>.Continuation
+    ) {
+        let snapshot = live.snapshot
+        if snapshot.naming != nil {
+            if editNames(key, live: live) { finishNaming.yield() }
+            return
+        }
+        if snapshot.help {
+            live.update { $0.help = false }
+            return
+        }
+        var action: ScreenAction?
+        switch key {
+        case .char(let char):
+            switch char.lowercased() {
+            case "q": action = .stop
+            case " ", "p": action = .pause
+            case "n": action = .name
+            case "v": action = .visualizer
+            case "k": action = .skin
+            case "?", "h": action = .help
+            case "f": action = .follow
+            default: break
+            }
+        case .up: scroll(1, live)
+        case .down: scroll(-1, live)
+        case .pageUp: scroll(10, live)
+        case .pageDown: scroll(-10, live)
+        case .home: scroll(Int.max / 2, live)
+        case .end: action = .follow
+        case .wheelUp: scroll(3, live)
+        case .wheelDown: scroll(-3, live)
+        case .click(let x, let y): action = snapshot.regions.last { $0.contains(x, y) }?.action
+        default: break
+        }
+        guard let action else { return }
+        let busy = snapshot.stopping || snapshot.finished
+        switch action {
+        case .stop:
+            if !busy { stop.yield() }
+        case .pause:
+            if !busy {
+                let nowPaused = paused.toggle()
+                live.update { $0.paused = nowPaused }
+            }
+        case .resume:
+            if !busy && paused.isPaused {
+                let nowPaused = paused.toggle()
+                live.update { $0.paused = nowPaused }
+            }
+        case .name:
+            live.update { state in
+                var speakers: [SpeakerID] = []
+                for turn in state.turns.sorted(by: { $0.start < $1.start }) where !speakers.contains(turn.speaker) {
+                    speakers.append(turn.speaker)
+                }
+                if !speakers.isEmpty && !state.finished { state.naming = LiveState.Naming(speakers: speakers) }
+            }
+        case .visualizer: live.update { $0.visualizer = $0.visualizer.next }
+        case .skin: live.update { $0.skin = ($0.skin + 1) % Skin.all.count }
+        case .help: live.update { $0.help = true }
+        case .follow: live.update { $0.scroll = 0 }
+        }
+    }
+
+    private static func scroll(_ rows: Int, _ live: LiveState) {
+        live.update { $0.scroll = max(0, min($0.maxScroll, $0.scroll + rows)) }
+    }
+
+    /// Edits names in the naming dialog. Returns true when the end-of-meeting dialog closes.
+    private static func editNames(_ key: Key, live: LiveState) -> Bool {
+        var finished = false
+        live.update { state in
+            guard var naming = state.naming else { return }
+            let speaker = naming.speakers[naming.selected]
+            var close = false
+            switch key {
+            case .char(let char):
+                if (state.names[speaker] ?? "").count < 40 { state.names[speaker, default: ""].append(char) }
+            case .backspace:
+                if var name = state.names[speaker], !name.isEmpty {
+                    name.removeLast()
+                    state.names[speaker] = name
+                }
+            case .enter:
+                if naming.selected + 1 < naming.speakers.count { naming.selected += 1 } else { close = true }
+            case .down, .tab: naming.selected = min(naming.speakers.count - 1, naming.selected + 1)
+            case .up: naming.selected = max(0, naming.selected - 1)
+            case .escape: close = true
+            default: break
+            }
+            if close {
+                state.naming = nil
+                finished = naming.final
+            } else {
+                state.naming = naming
+            }
+        }
+        return finished
     }
 }

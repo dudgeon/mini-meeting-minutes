@@ -22,28 +22,34 @@ final class Terminal: Sendable {
         original.withLock { $0 = attributes }
         attributes.c_lflag &= ~tcflag_t(ICANON | ECHO)
         tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
-        write("\u{1B}[?1049h\u{1B}[?25l")
+        // Alternate screen, hidden cursor, no line wrap, and mouse clicks and wheel (SGR reports).
+        write("\u{1B}[?1049h\u{1B}[?25l\u{1B}[?7l\u{1B}[?1000h\u{1B}[?1006h")
     }
 
     func leaveFullScreen() {
         stopReadingKeys()
-        write("\u{1B}[?25h\u{1B}[?1049l")
+        write("\u{1B}[?1000l\u{1B}[?1006l\u{1B}[?7h\u{1B}[0m\u{1B}[?25h\u{1B}[?1049l")
         if var attributes = original.withLock({ $0 }) {
             tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
         }
     }
 
-    /// Delivers key presses until `stopReadingKeys()`. Polls so the reader can stop without
-    /// consuming input meant for a later prompt.
-    func keys() -> AsyncStream<UInt8> {
+    /// Delivers keys and mouse events until `stopReadingKeys()`. Polls so the reader can stop
+    /// without consuming input meant for a later prompt.
+    func keys() -> AsyncStream<Key> {
         reading.store(true, ordering: .relaxed)
         return AsyncStream { continuation in
             let thread = Thread { [self] in
+                var parser = KeyParser()
                 var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
                 while reading.load(ordering: .relaxed) {
-                    guard poll(&descriptor, 1, 100) > 0 else { continue }
+                    guard poll(&descriptor, 1, 50) > 0 else {
+                        for key in parser.idle() { continuation.yield(key) }
+                        continue
+                    }
                     var byte: UInt8 = 0
-                    if read(STDIN_FILENO, &byte, 1) == 1 { continuation.yield(byte) }
+                    guard read(STDIN_FILENO, &byte, 1) == 1 else { continue }
+                    for key in parser.feed(byte) { continuation.yield(key) }
                 }
                 continuation.finish()
             }

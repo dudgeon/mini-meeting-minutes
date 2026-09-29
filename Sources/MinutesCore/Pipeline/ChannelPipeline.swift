@@ -31,6 +31,8 @@ public enum ChannelUpdate: Sendable {
     case pending(Channel, String)
     /// Newly attributed turns.
     case turns([Turn])
+    /// Seconds of this channel's audio currently held in memory, waiting to be diarized.
+    case buffered(Channel, TimeInterval)
 }
 
 /// Transcribes and diarizes one channel.
@@ -117,6 +119,7 @@ actor ChannelPipeline {
             updates += try await append([Float](repeating: 0, count: Int(gap * AudioChunk.samplesPerSecond)))
         }
         updates += try await append(chunk.samples)
+        updates.append(.buffered(channel, Double(window.count) / AudioChunk.samplesPerSecond))
         return updates
     }
 
@@ -137,6 +140,7 @@ actor ChannelPipeline {
         vadOrigin = received
         vadPosition = received
         lastSpeechEnd = nil
+        updates.append(.buffered(channel, Double(window.count) / AudioChunk.samplesPerSecond))
         return updates
     }
 
