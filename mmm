@@ -1,0 +1,23 @@
+#!/bin/bash
+# Runs mini-meeting-minutes, building it first if the sources are newer than the binary.
+# Usage: ./mmm [command] [options]   (see ./mmm --help)
+set -euo pipefail
+
+# Resolve symlinks, so the script also works when linked onto the PATH.
+source="${BASH_SOURCE[0]}"
+while [[ -L "$source" ]]; do
+  directory="$(cd -P "$(dirname "$source")" && pwd)"
+  source="$(readlink "$source")"
+  [[ "$source" == /* ]] || source="$directory/$source"
+done
+root="$(cd -P "$(dirname "$source")" && pwd)"
+# --disable-keychain: SwiftPM otherwise looks up GitHub credentials in the keychain, which can
+# block on an access prompt while resolving dependencies.
+build=(swift build --package-path "$root" -c release --disable-keychain)
+bin="$("${build[@]}" --show-bin-path)/mmm"
+
+if [[ ! -x "$bin" ]] || [[ -n "$(find "$root/Sources" "$root/Package.swift" "$root/Package.resolved" -newer "$bin" -print -quit 2>/dev/null)" ]]; then
+  echo "Building mini-meeting-minutes (first run takes a few minutes)…" >&2
+  "${build[@]}" >&2
+fi
+exec "$bin" "$@"

@@ -1,0 +1,51 @@
+import CryptoKit
+import Foundation
+import Testing
+
+@testable import MinutesCore
+
+@Suite struct ModelStoreTests {
+    /// A throwaway models directory with one file split into three parts.
+    func makeStore(corruptPart: Bool = false) throws -> (store: ModelStore, payload: Data) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mmm-store-\(UUID().uuidString)")
+        let directory = root.appendingPathComponent("model/weights")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let payload = Data((0..<10_000).map { UInt8($0 % 251) })
+        let parts = [payload[0..<4_000], payload[4_000..<8_000], payload[8_000...]]
+        for (index, part) in parts.enumerated() {
+            var bytes = Data(part)
+            if corruptPart && index == 1 { bytes[bytes.startIndex] ^= 0xFF }
+            try bytes.write(to: directory.appendingPathComponent("weight.bin.part-00\(index)"))
+        }
+        let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+        let manifest = """
+            {"formatVersion": 1, "sources": [],
+             "files": [{"path": "model/weights/weight.bin", "size": \(payload.count), "sha256": "\(digest)",
+                        "parts": ["model/weights/weight.bin.part-000", "model/weights/weight.bin.part-001",
+                                  "model/weights/weight.bin.part-002"]}]}
+            """
+        try manifest.write(to: root.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        return (try ModelStore(root: root), payload)
+    }
+
+    @Test func reassemblesSplitFiles() throws {
+        let (store, payload) = try makeStore()
+        try store.prepare()
+        #expect(try Data(contentsOf: store.url("model/weights/weight.bin")) == payload)
+        #expect(store.verify().isEmpty)
+        try store.prepare()  // idempotent
+    }
+
+    @Test func rejectsCorruptParts() throws {
+        let (store, _) = try makeStore(corruptPart: true)
+        #expect(throws: ModelStoreError.self) { try store.prepare() }
+        #expect(!FileManager.default.fileExists(atPath: store.url("model/weights/weight.bin").path))
+        #expect(!store.verify().isEmpty)
+    }
+
+    @Test func vendoredModelsAreComplete() throws {
+        let store = try ModelStore.locate()
+        try store.prepare()
+        #expect(store.verify().isEmpty)
+    }
+}
