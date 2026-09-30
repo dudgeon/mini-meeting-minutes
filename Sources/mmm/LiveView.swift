@@ -18,6 +18,14 @@ final class LiveState: Sendable {
         var start: TimeInterval?
     }
 
+    /// A recording someone already had, being transcribed instead of a live meeting.
+    struct Recording: Sendable {
+        let name: String
+        let length: TimeInterval
+        /// How many times faster than it plays it's being read, once that's known.
+        var speed: Double?
+    }
+
     /// Minutes saved at the end of a meeting, shown until the next one or quitting.
     struct Saved: Sendable {
         let path: String
@@ -39,6 +47,10 @@ final class LiveState: Sendable {
         var stopping = false
         var finished = false
         var channels: Set<Channel> = []
+        /// Set when transcribing a recording rather than recording a meeting.
+        var recording: Recording?
+        /// The Mac's Open window is up, to choose a recording.
+        var choosingRecording = false
         /// No microphone was found at the start; one connected later will be used.
         var awaitingMicrophone = false
         var levels: [Channel: Float] = [:]
@@ -53,6 +65,8 @@ final class LiveState: Sendable {
         var notes: [Note] = []
         var draft: NoteDraft?
         var warnings: [String] = []
+        /// A passing message, such as why a dropped file can't be transcribed; cleared on starting.
+        var notice: String?
         var outputPath = ""
         /// What's being blanked out.
         var redaction: Set<PIICategory> = []
@@ -112,6 +126,9 @@ final class LiveState: Sendable {
 
 extension LiveState.Snapshot {
     var started: Bool { startedAt != nil }
+
+    /// What to point out above the prompt: the newest warning, else a passing notice.
+    var message: String? { warnings.last ?? notice }
 
     /// Adds the note being typed, if it has any words, and closes it. Returns whether a note was
     /// added.

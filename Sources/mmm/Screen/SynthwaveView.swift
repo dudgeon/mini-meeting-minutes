@@ -110,26 +110,34 @@ struct SynthwaveView {
             ? ("■ DONE", Palette.cyan)
             : state.stopping
                 ? ("■ FINISHING", blink ? Palette.yellow : Palette.dim)
-                : state.paused ? ("❚❚ PAUSED", blink ? Palette.yellow : Palette.dim) : ("▶ REC", Palette.pink)
+                : state.paused
+                ? ("❚❚ PAUSED", blink ? Palette.yellow : Palette.dim)
+                : state.recording == nil ? ("▶ REC", Palette.pink) : ("▶ TRANSCRIBING", Palette.pink)
         canvas.text(2, y, label, fg: color, bg: bg, bold: true)
         canvas.region(2, y, label.count, 1, .pause)
         var x = 2 + label.count + 2
-        let clock = ScreenModel.longTime(state.elapsed)
+        var clock = ScreenModel.longTime(state.elapsed)
+        if let recording = state.recording { clock += " / " + ScreenModel.longTime(recording.length) }
         canvas.text(x, y, clock, fg: Palette.yellow, bg: bg, bold: true)
         x += clock.count + 3
-        for (channel, name, ink) in [(Channel.room, "MIC", Palette.pink), (Channel.remote, "SYS", Palette.cyan)] {
+        let meters =
+            state.recording == nil
+            ? [(Channel.room, "MIC", Palette.pink), (Channel.remote, "SYS", Palette.cyan)]
+            : [(Channel.room, "FILE", Palette.pink)]
+        for (channel, name, ink) in meters {
             guard x + 14 <= limit else { break }
             canvas.text(x, y, name, fg: Palette.dim, bg: bg)
+            let meterX = x + name.count + 1
             if state.channels.contains(channel) {
                 let lit = Int((model.meter(channel) * 10).rounded())
                 for cell in 0..<10 {
-                    canvas.put(x + 4 + cell, y, cell < lit ? "▮" : "▯", fg: cell < lit ? ink : Palette.unlit, bg: bg)
+                    canvas.put(meterX + cell, y, cell < lit ? "▮" : "▯", fg: cell < lit ? ink : Palette.unlit, bg: bg)
                 }
             } else {
                 let waiting = channel == .room && state.awaitingMicrophone
-                canvas.text(x + 4, y, waiting ? "NONE YET" : "OFF", fg: Palette.unlit, bg: bg)
+                canvas.text(meterX, y, waiting ? "NONE YET" : "OFF", fg: Palette.unlit, bg: bg)
             }
-            x += 17
+            x = meterX + 13
         }
         let memory = "\(model.heldAudio)s IN MEMORY"
         if x + memory.count <= limit {
@@ -221,9 +229,16 @@ struct SynthwaveView {
         guard !lines.isEmpty else {
             let message =
                 !state.started && !state.stopping
-                ? "PRESS SPACE TO START RECORDING · NOTHING IS RECORDED UNTIL THEN"
-                : model.listening ? "LISTENING… WORDS APPEAR HERE AS THEY'RE SPOKEN" : "NOTHING HEARD YET"
-            canvas.text(max(1, (width - message.count) / 2), first + rows / 2, message, fg: Palette.dim, bg: bg)
+                ? state.recording.map { "READY TO TRANSCRIBE “\($0.name.uppercased())”" }
+                    ?? "PRESS SPACE TO START RECORDING · O TO OPEN A RECORDING"
+                : !model.listening
+                    ? "NOTHING HEARD YET"
+                    : state.recording == nil
+                        ? "LISTENING… WORDS APPEAR HERE AS THEY'RE SPOKEN"
+                        : "READING THE RECORDING… WORDS APPEAR AS THEY'RE RECOGNIZED"
+            canvas.text(
+                max(1, (width - message.count) / 2), first + rows / 2, message.clipped(width - 2), fg: Palette.dim,
+                bg: bg)
             return
         }
         maxScroll = max(0, lines.count - rows)
@@ -268,18 +283,27 @@ struct SynthwaveView {
             return
         }
         if state.askingConsent {
-            canvas.text(2, y, "Y YES, EVERYONE HAS AGREED · N NOT YET", fg: Palette.dim, limit: width - 4)
+            canvas.text(
+                2, y,
+                state.recording == nil
+                    ? "Y YES, EVERYONE HAS AGREED · N NOT YET" : "Y YES, EVERYONE IN IT AGREED · N NOT NOW",
+                fg: Palette.dim, limit: width - 4)
+            return
+        }
+        if state.choosingRecording {
+            canvas.text(2, y, "CHOOSE A RECORDING IN THE WINDOW THAT OPENED…", fg: blink ? Palette.yellow : Palette.dim,
+                limit: width - 4)
             return
         }
         var keys: [(String, String, ScreenAction)] =
             state.saved != nil
-            ? [("SPACE", "NEW", .newMeeting), ("RETURN", "OPEN", .open), ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin),
-               ("Q", "QUIT", .quit)]
+            ? [("SPACE", "NEW", .newMeeting), ("O", "OPEN FILE", .openRecording), ("RETURN", "MINUTES", .open),
+               ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
             : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
             : !state.started
-            ? [("SPACE", "START", .pause), ("Q", "QUIT", .stop), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
-               ("?", "HELP", .help)]
+            ? [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording), ("Q", "QUIT", .stop),
+               ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help)]
             : [
                 ("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("Q", "STOP & SAVE", .stop),
                 ("RETURN", "NOTE", .note), ("N", "NAME", .name), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
@@ -287,7 +311,7 @@ struct SynthwaveView {
             ]
         // In a narrow window the visualizer key goes first, then help; K (the way back) stays.
         func fits() -> Bool { keys.reduce(2) { $0 + $1.0.count + $1.1.count + 4 } - 3 <= width - 2 }
-        for dropped in ["V", "?"] where !fits() { keys.removeAll { $0.0 == dropped } }
+        for dropped in ["V", "?", "R", "O"] where !fits() { keys.removeAll { $0.0 == dropped } }
         var x = 2
         for (key, label, action) in keys {
             let span = key.count + 1 + label.count
@@ -314,7 +338,7 @@ struct SynthwaveView {
     }
 
     private func warningLines() -> [String] {
-        guard let warning = state.warnings.last else { return [] }
+        guard let warning = state.message else { return [] }
         return Array(warning.wrapped(to: max(10, width - 8)).prefix(2))
     }
 
@@ -367,19 +391,27 @@ struct SynthwaveView {
             limit: w - 5)
     }
 
-    /// The question before recording.
+    /// The question before recording, or before transcribing a recording.
     private mutating func drawConsent() {
         let bg = Palette.strip
         let w = min(width - 2, 76)
-        let lines = SidebarView.consentText.wrapped(to: w - 6)
-        let (x, y) = dialog("BEFORE YOU RECORD", width: w, height: lines.count + 7)
+        let recording = state.recording != nil
+        let lines = (recording ? SidebarView.recordingConsentText : SidebarView.consentText).wrapped(to: w - 6)
+        let title = recording ? "BEFORE YOU TRANSCRIBE" : "BEFORE YOU RECORD"
+        let (x, y) = dialog(title, width: w, height: lines.count + 7)
         for (index, line) in lines.enumerated() {
             canvas.text(x + 3, y + 2 + index, line, fg: Palette.text, bg: bg)
         }
         let row = y + lines.count + 3
-        canvas.text(x + 3, row, "HAS EVERYONE BEEN TOLD, AND AGREED?", fg: Palette.yellow, bg: bg, bold: true)
+        canvas.text(
+            x + 3, row, recording ? "DID EVERYONE IN IT KNOW, AND AGREE?" : "HAS EVERYONE BEEN TOLD, AND AGREED?",
+            fg: Palette.yellow, bg: bg, bold: true)
         var column = x + 3
-        for (key, label, action) in [("Y", "YES, START RECORDING", ScreenAction.consent), ("N", "NOT YET", .decline)] {
+        let answers =
+            recording
+            ? [("Y", "YES, TRANSCRIBE IT", ScreenAction.consent), ("N", "NOT NOW", .decline)]
+            : [("Y", "YES, START RECORDING", ScreenAction.consent), ("N", "NOT YET", .decline)]
+        for (key, label, action) in answers {
             canvas.text(column, row + 2, key, fg: Palette.night, bg: Palette.yellow, bold: true)
             canvas.text(column + key.count + 1, row + 2, label, fg: Palette.pink, bg: bg, bold: true)
             canvas.region(column, row + 2, key.count + 1 + label.count, 1, action)
@@ -403,7 +435,10 @@ struct SynthwaveView {
     }
 
     private mutating func drawTooSmall() {
-        let status = state.finished ? "DONE" : state.stopping ? "FINISHING" : state.paused ? "PAUSED" : "STILL RECORDING"
+        let status =
+            state.finished
+            ? "DONE" : state.stopping ? "FINISHING" : state.paused ? "PAUSED"
+            : state.recording == nil ? "STILL RECORDING" : "STILL TRANSCRIBING"
         let lines = ["MAKE THIS WINDOW BIGGER", "to see Mini Meeting Minutes.", "", "\(status) · \(model.clock)"]
         let top = max(0, height / 2 - 2)
         for (index, line) in lines.enumerated() {

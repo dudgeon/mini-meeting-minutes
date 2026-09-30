@@ -69,23 +69,29 @@ struct SidebarView {
         if state.stopping { return (String(ScreenModel.spinner(time)), Palette.accent, "Finishing") }
         if state.paused { return ("❚❚", Palette.amber, "Paused") }
         // A slow pulse shows it's live without blinking.
-        return ("●", Palette.side.mixed(with: Palette.accent, 0.85 + 0.15 * sin(time * 3)), "Recording")
+        let pulse = Palette.side.mixed(with: Palette.accent, 0.85 + 0.15 * sin(time * 3))
+        return state.recording == nil ? ("●", pulse, "Recording") : ("▶", pulse, "Transcribing")
     }
 
     private var keyList: [(key: String, label: String, action: ScreenAction?)] {
         if state.saved != nil {
             return [
-                ("space", "new recording", .newMeeting), ("return", "open minutes", .open), ("r", "show in Finder", .reveal),
-                ("k", "synthwave", .skin), ("q", "quit", .quit),
+                ("space", "new recording", .newMeeting), ("o", "open a recording", .openRecording),
+                ("return", "open minutes", .open), ("r", "show in Finder", .reveal), ("k", "synthwave", .skin),
+                ("q", "quit", .quit),
             ]
         }
-        if state.askingConsent { return [("y", "yes, start", .consent), ("n", "not yet", .decline)] }
+        if state.askingConsent {
+            return state.recording == nil
+                ? [("y", "yes, start", .consent), ("n", "not yet", .decline)]
+                : [("y", "yes, transcribe", .consent), ("n", "not now", .decline)]
+        }
         if state.draft != nil { return [("return", "add the note", nil), ("esc", "cancel", nil)] }
         if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         if !state.started {
             return [
-                ("space", "start recording", .pause), ("q", "quit", .stop), ("k", "synthwave", .skin),
-                ("?", "all shortcuts", .help),
+                ("space", "start recording", .pause), ("o", "open a recording", .openRecording), ("q", "quit", .stop),
+                ("k", "synthwave", .skin), ("?", "all shortcuts", .help),
             ]
         }
         return [
@@ -109,6 +115,7 @@ struct SidebarView {
         canvas.text(w - 2 - model.clock.count, 3, model.clock, fg: Palette.text, bg: bg, bold: true)
         canvas.region(0, 3, w, 1, .pause)
         canvas.text(4, 4, state.title.clipped(w - 6), fg: Palette.dim, bg: bg)
+        if state.recording != nil { drawProgress(y: 5, width: w) }
 
         // Keys sit at the bottom, in the same place whichever keys apply. The other sections fill
         // down from the top; in a short window speakers get one row each, then privacy and
@@ -124,7 +131,7 @@ struct SidebarView {
 
         let top = 7
         let available = keysTop - 1 - top
-        let privacyRows = state.channels.count == 2 ? 5 : 4
+        let privacyRows = state.channels.count == 2 || state.recording != nil ? 5 : 4
         let speakers = model.talk.count
         var perSpeaker = 2
         var listening = true
@@ -142,6 +149,20 @@ struct SidebarView {
             y += 4
         }
         if privacy { drawPrivacy(top: y, width: w) }
+    }
+
+    /// How much of a recording has been read: a bar, and the share done.
+    private mutating func drawProgress(y: Int, width w: Int) {
+        let bg = Palette.side
+        let done = model.progress ?? 0
+        let percent = "\(Int((done * 100).rounded(.down)))%"
+        let bar = max(4, w - 7 - percent.count)
+        let filled = Int((done * Double(bar)).rounded())
+        for cell in 0..<bar {
+            let done = cell < filled
+            canvas.put(4 + cell, y, done ? "━" : "─", fg: done ? Palette.accent : Palette.rule, bg: bg)
+        }
+        canvas.text(w - 2 - percent.count, y, percent, fg: Palette.dim, bg: bg)
     }
 
     private mutating func heading(_ title: String, y: Int) {
@@ -182,9 +203,11 @@ struct SidebarView {
 
     private mutating func drawListening(top: Int, width w: Int) {
         heading("LISTENING TO", y: top)
-        for (index, channel) in [Channel.room, .remote].enumerated() {
+        let rows: [(Channel, String)] =
+            state.recording == nil ? [(.room, "mic"), (.remote, "system")] : [(.room, "file")]
+        for (index, (channel, label)) in rows.enumerated() {
             let y = top + 1 + index
-            canvas.text(4, y, channel == .room ? "mic" : "system", fg: Palette.text, bg: Palette.side)
+            canvas.text(4, y, label, fg: Palette.text, bg: Palette.side)
             drawLevels(channel, x: 12, y: y, width: w - 15)
         }
         canvas.region(0, top, w, 3, .visualizer)
@@ -230,6 +253,7 @@ struct SidebarView {
         if state.channels.count == 2 {
             checks.append(state.echoCancellation ? (true, "speaker echo removed") : (false, "echo removal is off"))
         }
+        if state.recording != nil { checks.append((true, "the recording is only read")) }
         for (index, check) in checks.enumerated() {
             let y = top + 1 + index
             canvas.put(2, y, check.0 ? "✓" : "○", fg: check.0 ? Palette.green : Palette.amber, bg: bg)
@@ -273,12 +297,18 @@ struct SidebarView {
         } else if let saved = state.saved {
             panelTop = panelBottom - 3
             drawSaved(saved, x: x, top: panelTop, width: w)
-            hint("space new recording · return open the minutes · r show in Finder · q quit", x: x, width: w)
+            hint(
+                "space new recording · o open a recording · return open the minutes · r show in Finder · q quit", x: x,
+                width: w)
         } else if state.askingConsent {
-            let lines = Self.consentText.wrapped(to: max(20, w - 6))
+            let text = state.recording == nil ? Self.consentText : Self.recordingConsentText
+            let lines = text.wrapped(to: max(20, w - 6))
             panelTop = max(4, panelBottom - lines.count - 3)
             drawConsent(lines, x: x, top: panelTop, width: w)
-            hint("y yes, everyone has agreed: start recording · n not yet", x: x, width: w)
+            hint(
+                state.recording == nil
+                    ? "y yes, everyone has agreed: start recording · n not yet"
+                    : "y yes, everyone in it agreed: transcribe it · n not now", x: x, width: w)
         } else if state.help {
             let rows = ScreenModel.shortcuts(switchingTo: "synthwave")
             let visible = min(rows.count + 1, max(1, height - 12))
@@ -300,7 +330,7 @@ struct SidebarView {
         }
 
         var transcriptBottom = panelTop - 2
-        if let warning = state.warnings.last {
+        if let warning = state.message {
             let lines = Array(warning.wrapped(to: max(10, w - 4)).prefix(3))
             let top = panelTop - 1 - lines.count
             canvas.put(x + 1, top, "!", fg: Palette.amber, bold: true)
@@ -323,6 +353,11 @@ struct SidebarView {
         column += current.label.count + 2
         canvas.text(column, 1, model.clock, fg: Palette.text, bold: true)
         column += model.clock.count + 2
+        if let done = model.progress {
+            let percent = "\(Int((done * 100).rounded(.down)))%"
+            canvas.text(column, 1, percent, fg: Palette.accent)
+            column += percent.count + 2
+        }
         canvas.region(x, 1, column - x, 1, .pause)
         canvas.text(column, 1, state.title.clipped(x + room - column), fg: Palette.dim)
     }
@@ -337,7 +372,10 @@ struct SidebarView {
             state.finished
             ? keyList
             : !state.started
-                ? [("space", "start", .pause), ("q", "quit", .stop), ("k", "synthwave", .skin), ("?", "help", .help)]
+                ? [
+                    ("space", "start", .pause), ("o", "open", .openRecording), ("q", "quit", .stop),
+                    ("k", "synthwave", .skin), ("?", "help", .help),
+                ]
                 : [
                 ("return", "note", .note), ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop", .stop),
                 ("n", "name", .name), ("k", "synthwave", .skin), ("?", "help", .help),
@@ -363,6 +401,9 @@ struct SidebarView {
             canvas.text(
                 x + 4, y, "Finishing up: placing the last words and checking every speaker…", fg: Palette.text,
                 limit: w - 6)
+        } else if state.choosingRecording {
+            canvas.put(x + 2, y, ScreenModel.spinner(time), fg: Palette.accent)
+            canvas.text(x + 4, y, "Choose a recording in the window that opened…", fg: Palette.text, limit: w - 6)
         } else if !state.started {
             let quit = "q to quit"
             canvas.put(x + 2, y, ">", fg: Palette.text)
@@ -372,10 +413,14 @@ struct SidebarView {
         } else if state.paused {
             canvas.text(x + 2, y, "❚❚", fg: Palette.amber)
             canvas.text(
-                x + 5, y, "Paused. Nothing is being recorded; press space to carry on.", fg: Palette.amber, limit: w - 7)
+                x + 5, y,
+                state.recording == nil
+                    ? "Paused. Nothing is being recorded; press space to carry on."
+                    : "Paused. Press space to carry on transcribing.", fg: Palette.amber, limit: w - 7)
             canvas.region(x, top, w, 3, .resume)
         } else {
-            var placeholder = "Press return to add a note"
+            var placeholder =
+                state.recording == nil ? "Press return to add a note" : "\(model.reading) · return adds a note"
             if let speaker = model.newestUnnamed { placeholder += " · n to name \(speaker.description)" }
             let stop = "q to stop"
             canvas.put(x + 2, y, ">", fg: Palette.text)
@@ -391,20 +436,31 @@ struct SidebarView {
         + "consent is against the law, and that covers a transcript too, even though no audio is kept. Tell "
         + "anyone who joins later, too."
 
+    /// The same question, for a recording made before.
+    static let recordingConsentText =
+        "Everyone in this recording must have known they were being recorded, and agreed to it. In some places, "
+        + "including California, recording without everyone's consent is against the law, and so can be using "
+        + "that recording, a transcript of it included."
+
     /// The question before recording, in place of the prompt box.
     private mutating func drawConsent(_ lines: [String], x: Int, top: Int, width w: Int) {
         let height = height - 1 - top
+        let recording = state.recording != nil
         canvas.box(
-            x, top, w, height, border: Palette.accent, fill: Palette.background, title: "Before you record",
-            titleColor: Palette.text)
+            x, top, w, height, border: Palette.accent, fill: Palette.background,
+            title: recording ? "Before you transcribe" : "Before you record", titleColor: Palette.text)
         for (index, line) in lines.prefix(height - 4).enumerated() {
             canvas.text(x + 3, top + 1 + index, line, fg: Palette.text)
         }
         let y = top + height - 2
-        let question = "Has everyone been told, and agreed?"
+        let question = recording ? "Did everyone in it know, and agree?" : "Has everyone been told, and agreed?"
         canvas.text(x + 3, y, question, fg: Palette.text, bold: true, limit: w - 6)
         var column = x + 3 + question.count + 3
-        for (key, label, action) in [("y", "yes, start recording", ScreenAction.consent), ("n", "not yet", .decline)] {
+        let answers =
+            recording
+            ? [("y", "yes, transcribe it", ScreenAction.consent), ("n", "not now", .decline)]
+            : [("y", "yes, start recording", ScreenAction.consent), ("n", "not yet", .decline)]
+        for (key, label, action) in answers {
             guard column + key.count + label.count + 1 < x + w - 1 else { break }
             canvas.text(column, y, key, fg: Palette.accent, bold: true)
             canvas.text(column + key.count + 1, y, label, fg: Palette.dim)
@@ -595,17 +651,27 @@ struct SidebarView {
     private mutating func drawEmptyTranscript(x: Int, top: Int, rows: Int, width w: Int) {
         let title: String
         let detail: String
-        if !state.started && !state.stopping {
+        if let recording = state.recording, !state.started && !state.stopping {
+            title = "Ready to transcribe"
+            detail =
+                "“\(recording.name)”, \(ScreenModel.lengthText(recording.length)) long. It's only read: nothing but "
+                + "the minutes is saved."
+        } else if !state.started && !state.stopping {
             title = "Ready when you are"
             detail =
                 "Nothing is recorded until you press space."
                 + (width >= 84 ? " The meters under LISTENING TO show what the microphone and the Mac can hear." : "")
+                + " To transcribe a recording you already have, like a voice memo, press O or drag it onto this window."
         } else if state.stopping || state.finished {
             title = "Nothing was heard"
             detail = "No speech was picked up in this recording."
         } else if state.paused {
             title = "❚❚ Paused"
             detail = "Press space to start listening again."
+        } else if state.recording != nil {
+            title = "\(ScreenModel.spinner(time)) Reading the recording"
+            detail = "Words appear here as they're recognized, much faster than they were spoken, and who said them "
+                + "follows moments later."
         } else {
             title = "\(ScreenModel.spinner(time)) Listening"
             detail = "Words appear here as they're spoken, and who said them follows within about half a minute."
@@ -621,7 +687,8 @@ struct SidebarView {
 
     private mutating func drawTooSmall() {
         let current = status
-        let label = current.label == "Recording" ? "Still recording" : current.label
+        let still = ["Recording": "Still recording", "Transcribing": "Still transcribing"]
+        let label = still[current.label] ?? current.label
         let lines = ["Make this window bigger", "to see Mini Meeting Minutes.", "", "\(label) · \(model.clock)"]
         let top = max(0, height / 2 - 2)
         for (index, line) in lines.enumerated() {

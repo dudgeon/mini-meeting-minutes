@@ -14,8 +14,9 @@ mmm --no-mic                         # a call on headphones: the call side only
 mmm --no-system                      # an in-person meeting: the room only
 mmm --output ~/Notes/                # a folder, or a file name ending in .md
 mmm --redact all                     # blank out names, emails and more, too
+mmm "Team sync.m4a"                  # transcribe a recording you already have, like a voice memo
 mmm doctor                           # check the models, permissions and microphones
-mmm transcribe --room mic.m4a --remote call.m4a   # recordings you already have
+mmm transcribe --room mic.m4a --remote call.m4a   # separate room and call recordings
 ```
 
 ## A meeting, step by step
@@ -37,6 +38,7 @@ mmm transcribe --room mic.m4a --remote call.m4a   # recordings you already have
    - **Return** opens them;
    - **R** shows them in Finder;
    - **Space** starts another meeting;
+   - **O** transcribes a recording instead;
    - **Q** quits.
 
 Closing the window or quitting Terminal also stops and saves the meeting, just without the naming
@@ -49,6 +51,7 @@ step.
 | **Space** | Start recording (after you confirm everyone has agreed); then pause or resume. Paused audio is dropped, not buffered |
 | **Return** | Write a note; **Return** again adds it, **Esc** cancels |
 | **Q** or Ctrl-C | Stop and save |
+| **O** | Before recording, or once the minutes are saved: transcribe a recording instead. Dragging one onto the window does the same |
 | **N** | Name the speakers, any time |
 | **V** | Switch the visualizer: spectrum, waveform, off |
 | **K** | Switch between the sidebar and synthwave mode |
@@ -90,14 +93,44 @@ picture shrinks with the window.
 
 ## Transcribing recordings you already have
 
+There are three ways to open a recording:
+- press **O** on the ready or saved screen and choose it;
+- drag it onto the window;
+- run `mmm "Team sync.m4a"`.
+
+Most audio and video files work:
+- m4a, including Voice Memos' recordings (.m4a and .qta);
+- mp3, wav, aiff and caf;
+- mp4 and mov.
+
+For a voice memo, drag it from Voice Memos to your desktop first.
+
+1. **Consent.** The app asks you to confirm that everyone in the recording knew it was being
+   recorded, and agreed. **Y** starts, **N** goes back.
+2. **A sped-up meeting.** The recording goes through the same steps as a live meeting, as fast as
+   the Mac can go:
+   - words appear as they're recognized, then who said them;
+   - a progress bar and the speed show how far along it is;
+   - an hour-long recording takes about a minute on a recent Mac.
+
+   **Space** pauses, **N** names speakers, **Return** adds a note at that point in the recording,
+   and **Q** stops early and keeps what's been transcribed.
+3. **Saved.** The minutes are dated from the recording and titled with its name (a voice memo's
+   own title is used).
+
+The recording is only read, never changed, copied or deleted. `--title`, `--output`, `--redact`,
+`--keep` and `--no-names` work here too.
+
+For a meeting recorded as separate room and call tracks, `mmm transcribe` combines them, removing
+the call's echo from the room track:
+
 ```sh
 mmm transcribe --room mic.m4a --remote call.m4a
 mmm transcribe --remote zoom-recording.m4a --stdout
 ```
 
-Your recordings are only read, never changed. `--title`, `--output`, `--redact`, `--keep`,
-`--no-names` and `--no-echo-cancel` work here too, and `--stdout` prints the minutes instead of
-saving them.
+`--no-echo-cancel` turns echo removal off, and `--stdout` prints the minutes instead of saving
+them.
 
 ## Permissions
 

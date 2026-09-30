@@ -89,8 +89,29 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 - **Paragraphs by speaker, with timestamps**, and your notes in place as quotes.
 - **Kept up to date during the meeting**, so a crash loses at most the last half-minute or so.
 - **Never overwrite each other:** if a name is taken, the new file gets a number.
-- **Transcribe recordings you already have** with `mmm transcribe`. Room and call recordings can be
-  given separately, and the originals are only read.
+
+## Recordings you already have
+
+- **Voice memos and other recordings.** There are three ways to open one:
+  - press **O** and choose it;
+  - drag it onto the window;
+  - run `mmm recording.m4a`.
+
+  Most audio and video files work: m4a (including Voice Memos' .m4a and .qta), mp3, wav, aiff,
+  caf, mp4 and mov.
+- **Like a meeting, sped up.** The recording goes through the same pipeline as a live meeting, as
+  fast as the Mac allows:
+  - words and speaker labels fly by;
+  - a progress bar and the speed show how far along it is;
+  - on the Mac it was developed on, a 3-minute memo took 2.5 seconds (about 75 times real time).
+- **Everything else works as in a meeting:** naming speakers, notes, pausing, or stopping early
+  and keeping what's done.
+- **Dated from the recording itself,** and titled with its name (a voice memo's own title is
+  used).
+- **Consent first:** you confirm that everyone in the recording knew and agreed, and the minutes
+  say so.
+- **Only read,** never changed, copied or deleted.
+- **Separate room and call tracks** of the same meeting are combined with `mmm transcribe`.
 
 ## The screen
 

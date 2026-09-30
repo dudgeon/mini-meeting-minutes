@@ -10,7 +10,8 @@ import Testing
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Sources")
         let forbidden = [
             "AVAudioFile(forWriting", "ExtAudioFileCreate", "AudioFileCreate", "transcribeDiskBacked", "makeDiskBackedSource",
-            "AudioSourceFactory", "embeddingExportPath", "process(url", "transcribe(url",
+            "AudioSourceFactory", "embeddingExportPath", "process(url", "transcribe(url", "AVAssetWriter",
+            "AVAssetExportSession", "AVAudioRecorder",
         ]
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []

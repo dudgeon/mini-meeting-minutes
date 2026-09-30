@@ -81,6 +81,24 @@ import Testing
         #expect(doc.markdown().contains("had been told the conversation would be recorded and transcribed, and had agreed"))
     }
 
+    @Test func minutesOfARecordingSayWhereTheyCameFrom() {
+        var doc = document([turn(.room, 1, 0, "Hello.")])
+        doc.recording = MinutesDocument.Recording(name: "Team sync.m4a", length: 125)
+        doc.consentConfirmedAt = Date(timeIntervalSince1970: 0)
+        var markdown = doc.markdown()
+        #expect(markdown.contains("- **Audio:** the recording “Team sync.m4a”, which was only read\n"))
+        #expect(markdown.contains("- **Duration:** 2 min\n"))
+        #expect(markdown.contains("the person transcribing it confirmed that everyone in the recording had known"))
+        #expect(!markdown.contains("microphone") && !markdown.contains("echo"))
+
+        // Stopped partway through.
+        doc.recording?.length = 3600
+        markdown = doc.markdown()
+        #expect(markdown.contains("- **Duration:** 2 min (stopped early; the recording runs 1 h 0 min)\n"))
+        doc.inProgress = true
+        #expect(doc.markdown().contains("> Transcribing in progress."))
+    }
+
     @Test func timestamps() {
         #expect(MinutesDocument.timestamp(0) == "00:00:00")
         #expect(MinutesDocument.timestamp(59.9) == "00:00:59")

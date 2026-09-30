@@ -67,6 +67,20 @@ python3 -m venv /tmp/demo-venv && /tmp/demo-venv/bin/pip install pillow
 /tmp/demo-venv/bin/python scripts/record_demo.py --minutes /tmp/out       # also keep the minutes
 ```
 
+## Long meetings
+
+`scripts/long_meeting_check.py` plays a synthetic meeting (two voices in the room, two on the call)
+through `mmm` faster than real time. It samples the app's memory every 5 seconds and prints:
+- memory per quarter hour of meeting, and the peak;
+- how far speaker labels trailed the audio.
+
+The defaults (2 hours at 8×) take about 15 minutes.
+
+```sh
+python3 scripts/long_meeting_check.py
+python3 scripts/long_meeting_check.py --hours 0.5 --speed 4
+```
+
 ## The explainer video
 
 `scripts/explainer/make.py` makes a one-minute 1080p explainer: two narrators (the Samantha and
@@ -111,7 +125,7 @@ python3 -m venv /tmp/explainer-venv && /tmp/explainer-venv/bin/pip install pillo
 | `Sources/mmm/Screen/` | The screen: the sidebar and synthwave looks, drawing, visualizers and input |
 | `Models/` | Vendored Core ML models; see [Models/README.md](../Models/README.md) |
 | `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (the end-to-end check), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), and `explainer/` (the explainer video) |
+| `scripts/` | `e2e_check.py` (the end-to-end check), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.

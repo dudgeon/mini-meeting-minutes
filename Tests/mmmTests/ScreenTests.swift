@@ -1,5 +1,6 @@
 import Foundation
 import MinutesCore
+import Synchronization
 import Testing
 
 @testable import mmm
@@ -179,6 +180,52 @@ import Testing
         #expect(Set(done.regions.map { "\($0.action)" }).isSuperset(of: ["newMeeting", "open", "reveal", "quit"]))
     }
 
+    @Test(arguments: Look.allCases, [(120, 42), (100, 30), (84, 24), (60, 16), (50, 12)])
+    func transcribingARecording(look: Look, size: (Int, Int)) {
+        var state = Self.snapshot()
+        state.channels = [.room]
+        state.recording = LiveState.Recording(name: "Team sync.m4a", length: 300, speed: 42)
+        state.sources = [.room: "Team sync.m4a"]
+        let text = Self.text(Self.render(state, look, size.0, size.1))
+        #expect(text.contains("That is concerning"))
+        if look == .sidebar {
+            #expect(text.contains("Transcribing"))
+            if size.0 >= 84 && size.1 >= 20 { #expect(text.contains("25%") && text.contains("file")) }
+            if size.0 >= 100 { #expect(text.contains("42× speed")) }
+        } else {
+            #expect(text.contains("TRANSCRIBING") || size.0 < 60)
+            if size.0 >= 100 { #expect(text.contains("00:05:00") && text.contains("FILE")) }
+        }
+        #expect(!text.contains("REC ") && !text.contains("● Recording"))
+
+        // Asked first, in words for a recording made before.
+        var asking = state
+        asking.startedAt = nil
+        asking.turns = []
+        asking.pending = [:]
+        asking.askingConsent = true
+        let question = Self.render(asking, look, size.0, size.1)
+        if size.1 >= 16 { #expect(Self.text(question).lowercased().contains("before you transcribe")) }
+        if size.0 >= 84 {  // narrower, the answers are keys only
+            #expect(Set(question.regions.map { "\($0.action)" }).isSuperset(of: ["consent", "decline"]))
+        }
+    }
+
+    @Test(arguments: Look.allCases)
+    func aRecordingCanBeOpenedBeforeAndAfter(look: Look) {
+        var ready = LiveState.Snapshot()
+        ready.channels = [.room, .remote]
+        let before = Self.render(ready, look, 120, 42)
+        #expect(Set(before.regions.map { "\($0.action)" }).contains("openRecording"))
+        var saved = Self.snapshot()
+        saved.finished = true
+        saved.saved = LiveState.Saved(path: "/tmp/x.md", turns: 2, speakers: 2)
+        #expect(Set(Self.render(saved, look, 120, 42).regions.map { "\($0.action)" }).contains("openRecording"))
+        // Not while recording.
+        let recording = Self.render(Self.snapshot(), look, 120, 42)
+        #expect(!Set(recording.regions.map { "\($0.action)" }).contains("openRecording"))
+    }
+
     @Test func redactionPlaceholdersStandApart() {
         let segments = ScreenModel.segments("I spoke with [NAME] about [the] budget [EMAIL].")
         #expect(segments.map(\.text) == ["I spoke with ", "[NAME]", " about [the] budget ", "[EMAIL]", "."])
@@ -206,23 +253,35 @@ import Testing
     }
 }
 
+/// Collects what a control was called with, from any task.
+final class Calls<Value: Sendable>: Sendable {
+    private let values = Mutex<[Value]>([])
+    func record(_ value: Value) { values.withLock { $0.append(value) } }
+    var all: [Value] { values.withLock { $0 } }
+}
+
 @Suite struct KeyHandlingTests {
     let live = LiveState()
     let paused = PauseFlag()
     let saves: AsyncStream<Void>
-    let choices: AsyncStream<Bool>
+    let choices: AsyncStream<Record.Next>
     let controls: LiveScreen.Controls
     let naming: AsyncStream<Void>.Continuation
+    /// Recordings asked for: nil means the Open window.
+    let opened = Calls<URL?>()
+    let declined = Calls<Bool>()
 
     init() {
         let live = live
         let save: AsyncStream<Void>.Continuation
-        let choose: AsyncStream<Bool>.Continuation
+        let choose: AsyncStream<Record.Next>.Continuation
+        let (opened, declined) = (opened, declined)
         (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        (choices, choose) = AsyncStream.makeStream(of: Bool.self)
+        (choices, choose) = AsyncStream.makeStream(of: Record.Next.self)
         controls = LiveScreen.Controls(
             paused: paused, begin: { live.update { $0.startedAt = Date() } },
-            stop: AsyncStream.makeStream(of: Void.self).continuation, save: save, choose: choose)
+            stop: AsyncStream.makeStream(of: Void.self).continuation, save: save, choose: choose,
+            openRecording: { opened.record($0) }, declined: { declined.record(true) })
         naming = AsyncStream.makeStream(of: Void.self).continuation
     }
 
@@ -245,15 +304,54 @@ import Testing
         #expect(paused.isPaused && live.snapshot.paused)
     }
 
-    @Test func theSavedScreenStartsAnotherMeetingOrQuits() async {
+    @Test func theSavedScreenStartsAnotherMeetingOrQuits() async throws {
         live.update { $0.saved = LiveState.Saved(path: "/tmp/minutes.md", turns: 3, speakers: 2) }
         press(.char(" "), .char("q"))
-        var answers: [Bool] = []
+        var answers: [Record.Next] = []
         for await choice in choices {
             answers.append(choice)
             if answers.count == 2 { break }
         }
-        #expect(answers == [true, false])
+        #expect(answers == [.live, .quit])
+
+        // Or a recording: chosen in the Open window, or dropped on the window.
+        let folder = try Fixtures.folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memo = try Fixtures.file("Team sync.m4a", in: folder)
+        press(.char("o"), .paste(memo.path.replacingOccurrences(of: " ", with: "\\ ") + " "))
+        #expect(opened.all == [nil, memo])
+    }
+
+    @Test func aRecordingCanBeOpenedInsteadOfRecording() throws {
+        let folder = try Fixtures.folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memo = try Fixtures.file("New Recording 4.m4a", in: folder)
+        let notes = try Fixtures.file("notes.txt", in: folder)
+        press(.char("o"))  // the Open window
+        press(.paste("'\(memo.path)'"))  // dropped on the window
+        #expect(opened.all == [nil, memo])
+        press(.paste(notes.path))  // not a recording
+        #expect(opened.all.count == 2 && live.snapshot.notice?.contains("notes.txt") == true)
+        press(.paste("just some words"))
+        #expect(opened.all.count == 2)
+
+        // Not once recording has begun.
+        press(.char(" "), .char("y"), .char("o"), .paste(memo.path))
+        #expect(live.snapshot.started && opened.all.count == 2)
+    }
+
+    @Test func aRecordingIsTranscribedOnlyOnceEveryoneInItAgreed() {
+        live.update {
+            $0.recording = LiveState.Recording(name: "Team sync.m4a", length: 600)
+            $0.askingConsent = true
+        }
+        press(.char("q"), .char("o"))  // other keys don't answer the question
+        #expect(live.snapshot.askingConsent && opened.all.isEmpty && declined.all.isEmpty)
+        press(.char("n"))
+        #expect(!live.snapshot.started && declined.all.count == 1)
+        live.update { $0.askingConsent = true }
+        press(.char("y"))
+        #expect(live.snapshot.started && live.snapshot.consentedAt != nil && declined.all.count == 1)
     }
 
     @Test func returnWritesANoteWhereTypingBegan() async {
@@ -277,6 +375,53 @@ import Testing
         // Escape drops a note, and an empty one isn't added.
         press(.enter, .char("x"), .escape, .enter, .enter)
         #expect(live.snapshot.notes.count == 1 && live.snapshot.draft == nil)
+    }
+}
+
+/// Files for tests, in a folder of their own that the test removes.
+enum Fixtures {
+    static func folder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mmm-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    /// An empty file: enough for anything that only looks at names.
+    static func file(_ name: String, in folder: URL) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        try Data().write(to: url)
+        return url
+    }
+}
+
+@Suite struct RecordingFileTests {
+    @Test func droppedFilesArriveAsPathsInManyForms() throws {
+        let folder = try Fixtures.folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memo = try Fixtures.file("Team sync (final).m4a", in: folder)
+        let escaped = memo.path.replacingOccurrences(of: " ", with: "\\ ").replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+        for pasted in [
+            memo.path,  // as is
+            escaped + " ",  // Terminal: escaped, with a trailing space
+            "'\(memo.path)'", "\"\(memo.path)\"",  // quoted
+            memo.absoluteString,  // a file URL
+            "\(escaped) \(escaped)",  // two files: the first
+        ] {
+            #expect(Recordings.url(fromPasted: pasted) == memo, "\(pasted)")
+        }
+        #expect(Recordings.url(fromPasted: folder.path) == nil)  // a folder
+        #expect(Recordings.url(fromPasted: memo.path + ".missing") == nil)
+        #expect(Recordings.url(fromPasted: "hello there") == nil)
+    }
+
+    @Test func recordingsAreKnownByTheirKind() {
+        for name in ["a.m4a", "b.qta", "c.MP3", "d.wav", "e.mov", "f.aiff", "g.caf", "h.mp4"] {
+            #expect(Recordings.isRecording(URL(fileURLWithPath: "/tmp/\(name)")), "\(name)")
+        }
+        for name in ["a.txt", "b.md", "c.pdf", "d"] {
+            #expect(!Recordings.isRecording(URL(fileURLWithPath: "/tmp/\(name)")), "\(name)")
+        }
     }
 }
 

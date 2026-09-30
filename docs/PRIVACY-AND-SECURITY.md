@@ -87,8 +87,10 @@ crashes or is killed, so there's never a leftover file to clean up.
 - **Swap.** Under heavy memory pressure macOS can move memory into its swap files on disk. On
   Apple silicon Macs, swap is encrypted with keys that are thrown away at restart, so it can't be
   read back afterwards.
-- **Your own recordings.** `mmm transcribe` reads audio files you already have. It never changes,
-  copies or deletes them.
+- **Your own recordings.** Recordings you open (with **O**, by dragging one onto the window, or
+  from the command line) are only read, never changed, copied or deleted. They're decoded in memory
+  like live audio, a few seconds at a time. Before transcribing one, the app asks you to confirm that
+  everyone in it knew it was being recorded and agreed.
 - **Other software.** The app can't stop anything else from recording: your meeting app's own
   recording feature, other apps with microphone access, or other people's devices.
 

@@ -44,7 +44,7 @@ import Testing
         let samples = Self.signal(rate: rate, seconds: 2)
         let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
         let resampler = try Resampler(inputFormat: format)
-        // One buffer, refilled for every block, like AudioFileReader.
+        // One buffer, refilled for every block.
         let block = 512
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(block))!
         var output: [Float] = []

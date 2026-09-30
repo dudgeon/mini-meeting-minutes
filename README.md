@@ -80,6 +80,15 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
 
 Your minutes are saved in the **Minutes** folder inside **Documents**.
 
+### Transcribe a recording you already have
+
+Voice memos and other recordings work too. On the ready screen, press **O** and choose the
+recording, or drag it onto the window. For a voice memo, first drag it from Voice Memos to your
+desktop. Press **Y** to confirm that everyone in it knew it was being recorded and agreed. It then
+plays through like a sped-up meeting: words and speakers fly by as fast as your Mac can go, and an
+hour-long recording takes about a minute on a recent Mac. The recording itself is only read,
+never copied or changed.
+
 ## Something not right?
 
 - **People on the call are missing.** Open **System Settings › Privacy & Security › Screen &

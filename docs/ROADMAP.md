@@ -11,7 +11,9 @@ On an M6 Mac mini:
 
 - **Speed.** The pipeline runs about 30 times faster than real time. Recognizing an utterance
   takes 60–100 ms, working out who spoke in a window 60–210 ms, and redaction about 1 ms.
-- **Memory.** It peaks around 610 MB, most of it the models.
+- **Memory.** It peaks at about 630 MB while the models load, then holds at 250–480 MB. That
+  stayed flat through a 2-hour meeting, with labels keeping pace throughout (see
+  [How it works](HOW-IT-WORKS.md#memory)).
 
 What makes a smaller Mac a risk:
 

@@ -115,6 +115,18 @@ struct ScreenModel {
 
     var clock: String { Self.shortTime(state.elapsed) }
 
+    /// How much of a recording has been read, 0–1; nil for a live meeting.
+    var progress: Double? {
+        guard let recording = state.recording else { return nil }
+        return recording.length > 0 ? min(1, max(0, state.elapsed / recording.length)) : 0
+    }
+
+    /// What reading a recording is up to: "Transcribing at 24× speed".
+    var reading: String {
+        guard let speed = state.recording?.speed, speed.isFinite, speed > 0 else { return "Transcribing" }
+        return "Transcribing at \(speed >= 10 ? String(Int(speed.rounded())) : String(format: "%.1f", speed))× speed"
+    }
+
     /// The folder and file name the minutes are saved to.
     var file: (folder: String, name: String) {
         let url = URL(fileURLWithPath: state.outputPath)
@@ -137,6 +149,16 @@ struct ScreenModel {
         return total >= 3600
             ? String(format: "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
             : String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    /// A recording's length in words: "58 minutes", "1 hour 5 minutes", "40 seconds".
+    static func lengthText(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return total == 1 ? "1 second" : "\(total) seconds" }
+        let minutes = (total + 30) / 60
+        func plural(_ count: Int, _ unit: String) -> String { "\(count) \(unit)\(count == 1 ? "" : "s")" }
+        guard minutes >= 60 else { return plural(minutes, "minute") }
+        return plural(minutes / 60, "hour") + (minutes % 60 == 0 ? "" : " " + plural(minutes % 60, "minute"))
     }
 
     /// Always hours, minutes and seconds: "00:04:05".
@@ -189,6 +211,7 @@ struct ScreenModel {
             ("return", "write a note; return adds it where you started typing, esc drops it"),
             ("space", "pause or resume (paused audio is dropped, not kept)"),
             ("q", "stop and save the minutes"),
+            ("o", "transcribe a recording you already have, like a voice memo (before you start)"),
             ("n", "name the speakers"),
             ("v", "visualizer: spectrum, waveform or off"),
             ("k", "switch to \(other)"),

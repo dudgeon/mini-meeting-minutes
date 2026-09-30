@@ -6,7 +6,15 @@ import Synchronization
 
 struct Record: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Record a meeting from the microphone and system audio (the default command).")
+        abstract: "Record a meeting from the microphone and system audio (the default command), or transcribe a "
+            + "recording you already have.")
+
+    @Argument(
+        help: ArgumentHelp(
+            "A recording to transcribe instead, such as a voice memo. Most audio and video files work: m4a, mp3, "
+                + "wav, mov and more. It's only read.",
+            valueName: "recording"))
+    var recording: String?
 
     @OptionGroup var minutes: MinutesOptions
 
@@ -33,7 +41,12 @@ struct Record: AsyncParsableCommand {
     var replaying: Bool { replayRoom != nil || replayRemote != nil }
 
     func validate() throws {
-        if noMic && noSystem { throw ValidationError("Nothing to record: --no-mic and --no-system together.") }
+        if noMic && noSystem && recording == nil {
+            throw ValidationError("Nothing to record: --no-mic and --no-system together.")
+        }
+        if let recording, !FileManager.default.fileExists(atPath: (recording as NSString).expandingTildeInPath) {
+            throw ValidationError("There's no recording at \(recording).")
+        }
     }
 
     func run() async throws {
@@ -41,23 +54,57 @@ struct Record: AsyncParsableCommand {
         var requested = Set(Channel.allCases)
         if noMic || (replaying && replayRoom == nil) { requested.remove(.room) }
         if noSystem || (replaying && replayRemote == nil) { requested.remove(.remote) }
-        var channels = replaying ? requested : try Setup.prepare(requested)
+        var next = Next.live
+        if let recording { next = .recording(URL(fileURLWithPath: (recording as NSString).expandingTildeInPath)) }
+        // The microphone and system audio permissions are checked, and explained, before the first
+        // live meeting; not when starting with a recording, which needs neither.
+        var channels: Set<Channel>?
+        if case .live = next { channels = replaying ? requested : try Setup.prepare(requested) }
         let models = try loadModels()
         let keep = minutes.wordsToKeep()
         // One terminal for the whole run: between meetings the screen stays up.
         let terminal = Terminal.isInteractive ? Terminal() : nil
         var look = skin
         var saved: [LiveState.Saved] = []
+        var notice: String?
         do {
-            while true {
-                let meeting = try await recordMeeting(
-                    models: models, redaction: redaction, keep: keep, requested: requested, channels: channels,
-                    terminal: terminal, look: look)
+            meetings: while true {
+                let meeting: Meeting
+                switch next {
+                case .quit:
+                    break meetings
+                case .live:
+                    // Later meetings use whichever microphone is there by then.
+                    let available =
+                        channels ?? requested.filter { $0 != .room || replaying || !AudioDevices.inputs().isEmpty }
+                    channels = nil
+                    meeting = try await recordMeeting(
+                        models: models, redaction: redaction, keep: keep, requested: requested, channels: available,
+                        recording: nil, terminal: terminal, look: look, notice: notice)
+                case .recording(let url):
+                    let reader: AudioFileReader
+                    do {
+                        reader = try await AudioFileReader.open(url)
+                    } catch {
+                        let problem =
+                            (error as? AudioFileError)?.localizedDescription
+                            ?? "“\(url.lastPathComponent)” couldn't be opened: \(error.localizedDescription)"
+                        // On screen, say so where the next recording would start; without, stop.
+                        guard terminal != nil else { throw FriendlyError(problem) }
+                        notice = problem
+                        next = .live
+                        continue
+                    }
+                    meeting = try await recordMeeting(
+                        models: models, redaction: redaction, keep: keep, requested: [.room], channels: [.room],
+                        recording: RecordingFile(url: url, reader: reader), terminal: terminal, look: look,
+                        notice: nil)
+                }
+                notice = nil
                 if let minutes = meeting.saved { saved.append(minutes) }
                 look = meeting.look
-                guard meeting.again else { break }
-                // The next meeting uses whichever microphone is there by then.
-                channels = requested.filter { $0 != .room || replaying || !AudioDevices.inputs().isEmpty }
+                // Without a screen there's no choosing what's next: one meeting a run.
+                next = terminal == nil ? .quit : meeting.next
             }
         } catch {
             terminal?.leaveFullScreen()
@@ -71,37 +118,70 @@ struct Record: AsyncParsableCommand {
         }
     }
 
+    /// What comes after a meeting.
+    enum Next: Sendable, Equatable {
+        /// A live meeting, from the ready screen.
+        case live
+        /// Transcribing a recording someone already has.
+        case recording(URL)
+        case quit
+    }
+
     /// How a meeting ended.
     struct Meeting {
         var saved: LiveState.Saved?
-        /// Start another (Space on the saved screen).
-        var again = false
+        var next = Next.quit
         var look: Look
+    }
+
+    /// A recording to transcribe, opened.
+    struct RecordingFile {
+        let url: URL
+        let reader: AudioFileReader
+
+        var name: String { url.lastPathComponent }
+        /// The recording's own title (Voice Memos keeps the memo's name in it), else its file name.
+        var title: String { reader.title ?? url.deletingPathExtension().lastPathComponent }
     }
 
     /// Records one meeting: waits for Space and the go-ahead that everyone agrees, records until
     /// Q, Ctrl-C, the window closing or the end of a replay, saves the minutes, then shows them
-    /// until the next choice.
+    /// until the next choice. With a `recording`, it transcribes that instead, just as it would a
+    /// meeting but as fast as the Mac allows, once it's confirmed that everyone in it agreed.
     private func recordMeeting(
         models: LoadedModels, redaction: Set<PIICategory>, keep: [String], requested: Set<Channel>,
-        channels: Set<Channel>, terminal: Terminal?, look: Look
+        channels: Set<Channel>, recording: RecordingFile?, terminal: Terminal?, look: Look, notice: String?
     ) async throws -> Meeting {
         // With no microphone yet, the room channel is set up anyway, and one connected later is used.
-        let awaitingMicrophone = requested.contains(.room) && !channels.contains(.room)
+        let awaitingMicrophone = recording == nil && requested.contains(.room) && !channels.contains(.room)
+        var settings = PipelineSettings()
+        // A recording is read as fast as the Mac allows. Readings of unfinished sentences would
+        // only slow that down, and each sentence's words are there moments later anyway.
+        if recording != nil { settings.interimSeconds = 0 }
         let session = try await MeetingSession(
             models: models,
             configuration: MeetingSession.Configuration(
-                channels: requested, echoCancellation: !noEchoCancel, redaction: redaction, keep: keep))
+                channels: requested, echoCancellation: !noEchoCancel && recording == nil, redaction: redaction,
+                keep: keep, pipeline: settings))
 
         let live = LiveState()
         let now = Date()
+        // A recording keeps its own date and title; a live meeting's come from when it begins.
+        let recordedAt = recording.map { $0.reader.date ?? now }
+        let name = recording.map { minutes.title ?? $0.title }
         live.update {
-            $0.title = minutes.title(startedAt: now)
-            $0.outputPath = minutes.outputURL(startedAt: now).path
+            $0.title = name ?? minutes.title(startedAt: now)
+            $0.outputPath = minutes.outputURL(startedAt: recordedAt ?? now, name: name).path
             $0.redaction = redaction
             $0.channels = channels
             $0.awaitingMicrophone = awaitingMicrophone
             $0.look = look
+            $0.notice = notice
+            if let recording {
+                $0.recording = LiveState.Recording(name: recording.name, length: recording.reader.duration)
+                $0.sources = [.room: recording.name]
+                $0.askingConsent = terminal != nil
+            }
         }
         let echo = await session.echoCancellationEnabled
         live.update { $0.echoCancellation = echo }
@@ -113,15 +193,52 @@ struct Record: AsyncParsableCommand {
         let clock = RecordingClock()
         let begin: @Sendable () -> Void = {
             guard clock.start() else { return }
-            let date = Date()
-            let path = MinutesOptions.unused(minutes.outputURL(startedAt: date)).path
+            let date = recordedAt ?? Date()
+            let path = MinutesOptions.unused(minutes.outputURL(startedAt: date, name: name)).path
             live.update {
                 $0.startedAt = date
-                $0.title = minutes.title(startedAt: date)
+                $0.title = name ?? minutes.title(startedAt: date)
                 $0.outputPath = path
+                $0.notice = nil
             }
         }
         if terminal == nil { begin() }
+
+        // How the meeting ends: Q, Ctrl-C or the end of the audio stop it; once it's saved, the
+        // choice of what's next. A meeting that ends before it begins says what follows it.
+        let (stops, stop) = AsyncStream.makeStream(of: Void.self)
+        let (choices, choose) = AsyncStream.makeStream(of: Next.self)
+        let then = Handoff<Next>()
+        // A recording chosen before recording starts replaces the meeting; once one is saved, it's
+        // what comes next. Without a file, the Mac's Open window asks for one.
+        let openRecording: @Sendable (URL?) -> Void = { url in
+            @Sendable func open(_ url: URL) {
+                let snapshot = live.snapshot
+                if snapshot.saved != nil {
+                    choose.yield(.recording(url))
+                } else if !snapshot.started && !snapshot.stopping && snapshot.recording == nil {
+                    then.put(.recording(url))
+                    stop.yield()
+                }
+            }
+            if let url {
+                open(url)
+                return
+            }
+            guard !live.snapshot.choosingRecording else { return }
+            live.update { $0.choosingRecording = true }
+            Task {
+                let chosen = await Recordings.choose()
+                live.update { $0.choosingRecording = false }
+                if let chosen { open(chosen) }
+            }
+        }
+        // Turning down a recording (not everyone agreed) goes back to the ready screen.
+        let declined: @Sendable () -> Void = {
+            guard live.snapshot.recording != nil else { return }
+            then.put(.live)
+            stop.yield()
+        }
 
         // Audio flows capture callback -> feed -> session, in capture order, on one task.
         let (feed, feedInput) = AsyncStream.makeStream(of: (Channel, AudioChunk).self)
@@ -153,16 +270,18 @@ struct Record: AsyncParsableCommand {
                 onSamples: deliver(.room))
         }
 
-        let (stops, stop) = AsyncStream.makeStream(of: Void.self)
         let microphone = MicrophoneSlot()
         var system: SystemAudioCapture?
         var replay: Task<Void, any Error>?
-        if replaying {
-            replay = try startReplay(live: live, clock: clock, paused: paused, feed: feedInput, stop: stop)
+        var reading: Task<Void, Never>?
+        if let recording {
+            reading = read(recording, into: session, live: live, clock: clock, paused: paused, stop: stop)
+        } else if replaying {
+            replay = try await startReplay(live: live, clock: clock, paused: paused, feed: feedInput, stop: stop)
         }
         // Start the microphone first: opening a Bluetooth headset's mic flips it to another profile,
         // and a system tap built mid-switch can fail to deliver.
-        if channels.contains(.room) && !replaying {
+        if channels.contains(.room) && !replaying && recording == nil {
             let capture = makeMicrophone()
             do {
                 try await capture.start()
@@ -177,7 +296,7 @@ struct Record: AsyncParsableCommand {
                 throw RecordError.capture("microphone", error)
             }
         }
-        if channels.contains(.remote) && !replaying {
+        if channels.contains(.remote) && !replaying && recording == nil {
             let capture = SystemAudioCapture(
                 onEvent: { event in
                     switch event {
@@ -256,31 +375,32 @@ struct Record: AsyncParsableCommand {
                 let document = MinutesDocument(
                     title: snapshot.title, startDate: startedAt, duration: snapshot.elapsed, sources: snapshot.sources,
                     redaction: redaction, echoCancellation: echo, turns: snapshot.turns, names: snapshot.names,
-                    notes: snapshot.notes)
+                    notes: snapshot.notes, consentConfirmedAt: snapshot.consentedAt,
+                    recording: snapshot.recording.map { MinutesDocument.Recording(name: $0.name, length: $0.length) })
                 if (try? document.write(to: URL(fileURLWithPath: snapshot.outputPath))) != nil {
                     live.update { $0.savedAt = snapshot.elapsed }
                 }
             }
         }
+        let meetingIsLive = recording == nil
         let updates = Task {
             for await update in session.updates {
                 live.apply(update)
                 if case .turns = update { save.yield() }
-                Self.logLatency(of: update, now: clock.seconds(to: HostTime.now()))
+                if meetingIsLive { Self.logLatency(of: update, now: clock.seconds(to: HostTime.now())) }
             }
         }
 
         // Show the live screen until q, Ctrl-C, or the end of a replay. Closing the window or
         // ending the process stops the recording the same way, but then no one is there to name
         // the speakers: the minutes are saved as they are. Once they're saved, the same keys quit.
-        let (choices, choose) = AsyncStream.makeStream(of: Bool.self)
         let hungUp = Latch()
         let signals = [SIGINT, SIGHUP, SIGTERM].map { number in
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
             source.setEventHandler {
                 if number != SIGINT { hungUp.raise() }
-                if live.snapshot.saved != nil { choose.yield(false) } else { stop.yield() }
+                if live.snapshot.saved != nil { choose.yield(.quit) } else { stop.yield() }
             }
             source.resume()
             return source
@@ -290,12 +410,18 @@ struct Record: AsyncParsableCommand {
             for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_DFL) }
         }
         var screen = LiveScreen.start(
-            terminal: terminal, live: live, clock: clock,
-            controls: LiveScreen.Controls(paused: paused, begin: begin, stop: stop, save: save, choose: choose))
+            terminal: terminal, live: live, clock: recording == nil ? clock : nil,
+            controls: LiveScreen.Controls(
+                paused: paused, begin: begin, stop: stop, save: save, choose: choose, openRecording: openRecording,
+                declined: declined))
         if screen == nil {
             Console.note(
-                "Recording. Make sure everyone taking part knows it's being recorded and transcribed, and agrees. "
-                    + "Press Ctrl-C to stop.")
+                recording.map {
+                    "Transcribing “\($0.name)”. Make sure everyone in it knew it was being recorded, and agreed. "
+                        + "Press Ctrl-C to stop."
+                }
+                    ?? "Recording. Make sure everyone taking part knows it's being recorded and transcribed, and "
+                    + "agrees. Press Ctrl-C to stop.")
         }
         for await _ in stops { break }
         let unattended = hungUp.isRaised
@@ -314,6 +440,8 @@ struct Record: AsyncParsableCommand {
         system?.stop()
         replay?.cancel()
         _ = await replay?.result
+        reading?.cancel()
+        await reading?.value
         feedInput.finish()
         try await processing.value
         let turns = try await session.finish()
@@ -322,9 +450,10 @@ struct Record: AsyncParsableCommand {
         await saving.value
 
         guard let startedAt = live.snapshot.startedAt else {
-            // Stopped before recording began: there's nothing to save.
+            // Stopped before recording began: there's nothing to save. What follows is a recording
+            // chosen instead, the ready screen after turning one down, or else leaving.
             await screen?.close()
-            return Meeting(look: live.snapshot.look)
+            return Meeting(next: then.take() ?? .quit, look: live.snapshot.look)
         }
         let names = Self.carryNames(from: live.snapshot, to: turns)
         live.update {
@@ -342,9 +471,11 @@ struct Record: AsyncParsableCommand {
         let snapshot = live.snapshot
         let outputURL = URL(fileURLWithPath: snapshot.outputPath)
         var document = MinutesDocument(
-            title: snapshot.title, startDate: startedAt, duration: clock.seconds(to: HostTime.now()) ?? 0,
+            title: snapshot.title, startDate: startedAt,
+            duration: recording == nil ? clock.seconds(to: HostTime.now()) ?? 0 : snapshot.elapsed,
             sources: snapshot.sources, redaction: redaction, echoCancellation: echo, turns: turns,
-            names: snapshot.names, notes: snapshot.notes, consentConfirmedAt: snapshot.consentedAt, inProgress: false)
+            names: snapshot.names, notes: snapshot.notes, consentConfirmedAt: snapshot.consentedAt, inProgress: false,
+            recording: snapshot.recording.map { MinutesDocument.Recording(name: $0.name, length: $0.length) })
         if screen == nil && !unattended && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
         let saved = LiveState.Saved(path: outputURL.path, turns: turns.count, speakers: document.speakers.count)
@@ -352,13 +483,13 @@ struct Record: AsyncParsableCommand {
 
         // The final minutes stay on screen, with what to do next.
         live.update { $0.saved = saved }
-        var again = false
+        var next = Next.quit
         for await choice in choices {
-            again = choice
+            next = choice
             break
         }
         await screen.close()
-        return Meeting(saved: saved, again: again, look: live.snapshot.look)
+        return Meeting(saved: saved, next: next, look: live.snapshot.look)
     }
 
     /// Names given during the meeting belong to live labels, which the final relabeling can
@@ -376,17 +507,59 @@ struct Record: AsyncParsableCommand {
         return names
     }
 
+    /// Reads a recording through the session as fast as the Mac allows, once it begins, keeping
+    /// the screen's clock at the point reached, then stops, as the end of a meeting would. A
+    /// problem partway through keeps what's been transcribed so far.
+    private func read(
+        _ recording: RecordingFile, into session: MeetingSession, live: LiveState, clock: RecordingClock,
+        paused: PauseFlag, stop: AsyncStream<Void>.Continuation
+    ) -> Task<Void, Never> {
+        let reader = UncheckedBox(recording.reader)
+        return Task {
+            while !clock.started {
+                if Task.isCancelled { return }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            // The speed shown is measured over the last few seconds of reading.
+            var mark = (time: ContinuousClock.now, position: TimeInterval(0))
+            var position: TimeInterval = 0
+            do {
+                while !Task.isCancelled, let chunk = try reader.value.next() {
+                    if paused.isPaused {
+                        while paused.isPaused && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
+                        mark = (.now, position)
+                    }
+                    guard !Task.isCancelled else { break }
+                    live.listen(.room, chunk.samples, level: chunk.rms)
+                    try await session.ingest(.room, chunk)
+                    position = chunk.endTime
+                    let elapsed = mark.time.duration(to: .now)
+                    let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                    let speed = seconds >= 1 ? (position - mark.position) / seconds : nil
+                    if seconds >= 3 { mark = (.now, position) }
+                    live.update {
+                        $0.elapsed = position
+                        if let speed { $0.recording?.speed = speed }
+                    }
+                }
+            } catch {
+                live.warn("Stopped partway through: \(error.localizedDescription)")
+            }
+            stop.yield()
+        }
+    }
+
     /// Plays the replay files through the live path in real time (times `replaySpeed`), then
     /// stops the recording.
     private func startReplay(
         live: LiveState, clock: RecordingClock, paused: PauseFlag,
         feed: AsyncStream<(Channel, AudioChunk)>.Continuation, stop: AsyncStream<Void>.Continuation
-    ) throws -> Task<Void, any Error> {
+    ) async throws -> Task<Void, any Error> {
         var readers: [(Channel, AudioFileReader)] = []
         for (channel, path) in [(Channel.room, replayRoom), (.remote, replayRemote)] {
             guard let path else { continue }
             let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-            readers.append((channel, try AudioFileReader(url: url, chunkSeconds: 0.1)))
+            readers.append((channel, try await AudioFileReader.open(url, chunkSeconds: 0.1)))
             live.update { $0.sources[channel] = "replay of \(url.lastPathComponent)" }
         }
         let speed = max(replaySpeed, 0.1)
@@ -485,6 +658,21 @@ final class MicrophoneSlot: Sendable {
     }
 }
 
+/// A value one task leaves for another to pick up.
+final class Handoff<Value: Sendable>: Sendable {
+    private let value = Mutex<Value?>(nil)
+
+    func put(_ new: Value) { value.withLock { $0 = new } }
+
+    /// The value left, if any, which is then gone.
+    func take() -> Value? {
+        value.withLock { value in
+            defer { value = nil }
+            return value
+        }
+    }
+}
+
 /// A flag that, once raised, stays up.
 final class Latch: Sendable {
     private let raised = Atomic<Bool>(false)
@@ -520,8 +708,13 @@ struct LiveScreen {
         let stop: AsyncStream<Void>.Continuation
         /// Asks for the minutes file to be rewritten, after a note is added.
         let save: AsyncStream<Void>.Continuation
-        /// On the saved screen: true for another meeting, false to quit.
-        let choose: AsyncStream<Bool>.Continuation
+        /// On the saved screen: what's next.
+        let choose: AsyncStream<Record.Next>.Continuation
+        /// Transcribe a recording (one dropped on the window, or nil to choose one in the Open
+        /// window), before recording starts or once the minutes are saved.
+        let openRecording: @Sendable (URL?) -> Void
+        /// Not everyone in the recording agreed: go back to the ready screen.
+        let declined: @Sendable () -> Void
     }
 
     let terminal: Terminal
@@ -530,8 +723,9 @@ struct LiveScreen {
     let drawing: Task<Void, Never>
     let namesDone: AsyncStream<Void>
 
-    /// Takes over the terminal (if it hasn't already), or returns nil when there is none.
-    static func start(terminal: Terminal?, live: LiveState, clock: RecordingClock, controls: Controls)
+    /// Takes over the terminal (if it hasn't already), or returns nil when there is none. The
+    /// meeting's clock drives the time shown; without one (a recording), whatever reads it does.
+    static func start(terminal: Terminal?, live: LiveState, clock: RecordingClock?, controls: Controls)
         -> LiveScreen?
     {
         guard let terminal else { return nil }
@@ -553,7 +747,7 @@ struct LiveScreen {
                 let interval = Self.seconds(now - previous)
                 previous = now
                 live.update {
-                    if !$0.stopping, let seconds = clock.seconds(to: HostTime.now()) { $0.elapsed = seconds }
+                    if !$0.stopping, let seconds = clock?.seconds(to: HostTime.now()) { $0.elapsed = seconds }
                 }
                 let snapshot = live.snapshot
                 let size = terminal.size
@@ -617,6 +811,12 @@ struct LiveScreen {
             live.update { $0.help = false }
             return
         }
+        // A file dropped on the window arrives as a paste of its path: before recording, that's a
+        // recording to transcribe.
+        if case .paste(let text) = key {
+            if !snapshot.started && snapshot.recording == nil && !snapshot.stopping { dropped(text, live, controls) }
+            return
+        }
         var action: ScreenAction?
         switch key {
         case .char(let char):
@@ -628,6 +828,7 @@ struct LiveScreen {
             case "k": action = .skin
             case "?", "h": action = .help
             case "f": action = .follow
+            case "o": action = .openRecording
             default: break
             }
         case .enter: action = .note
@@ -669,7 +870,22 @@ struct LiveScreen {
         case .skin: live.update { $0.look = $0.look.next }
         case .help: live.update { if $0.draft == nil { $0.help = true } }
         case .follow: live.update { $0.scroll = 0 }
+        case .openRecording:
+            if !snapshot.started && snapshot.recording == nil && !busy { controls.openRecording(nil) }
         case .consent, .decline, .newMeeting, .open, .reveal, .quit: break
+        }
+    }
+
+    /// Text pasted before recording, or on the saved screen: a recording dropped on the window is
+    /// transcribed; any other file gets a word on why not.
+    private static func dropped(_ text: String, _ live: LiveState, _ controls: Controls) {
+        if let url = Recordings.url(fromPasted: text) {
+            controls.openRecording(url)
+        } else if let file = Recordings.files(inPasted: text).first {
+            live.update {
+                $0.notice =
+                    "“\(file.lastPathComponent)” isn't a recording. Drop a sound or video file, like a voice memo."
+            }
         }
     }
 
@@ -694,11 +910,11 @@ struct LiveScreen {
             $0.askingConsent = false
             if agreed { $0.consentedAt = Date() }
         }
-        if agreed { controls.begin() }
+        if agreed { controls.begin() } else { controls.declined() }
     }
 
-    /// The saved screen: Space for another meeting, Return (or O) opens the minutes, R shows them
-    /// in Finder, Q or Escape quits.
+    /// The saved screen: Space for another meeting, O (or a dropped file) for a recording, Return
+    /// opens the minutes, R shows them in Finder, Q or Escape quits.
     private static func handleSaved(
         _ key: Key, _ saved: LiveState.Saved, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls
     ) {
@@ -707,7 +923,7 @@ struct LiveScreen {
         case .char(let char):
             switch char.lowercased() {
             case " ": action = .newMeeting
-            case "o": action = .open
+            case "o": action = .openRecording
             case "r": action = .reveal
             case "q": action = .quit
             case "k": action = .skin
@@ -723,11 +939,13 @@ struct LiveScreen {
         case .wheelUp: scroll(3, live)
         case .wheelDown: scroll(-3, live)
         case .click(let x, let y): action = snapshot.regions.last { $0.contains(x, y) }?.action
+        case .paste(let text): dropped(text, live, controls)
         default: break
         }
         switch action {
-        case .newMeeting: controls.choose.yield(true)
-        case .quit, .stop: controls.choose.yield(false)
+        case .newMeeting: controls.choose.yield(.live)
+        case .quit, .stop: controls.choose.yield(.quit)
+        case .openRecording: controls.openRecording(nil)
         case .open: Setup.openMinutes(saved.path)
         case .reveal: Setup.showInFinder(saved.path)
         case .skin: live.update { $0.look = $0.look.next }

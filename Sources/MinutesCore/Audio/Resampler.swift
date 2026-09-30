@@ -111,36 +111,3 @@ public enum ResamplerError: Error, LocalizedError {
         }
     }
 }
-
-/// Reads an audio file as 16 kHz mono chunks, for `mmm transcribe`. Nothing is written back.
-public final class AudioFileReader {
-    public let duration: TimeInterval
-    private let file: AVAudioFile
-    private let resampler: Resampler
-    private let buffer: AVAudioPCMBuffer
-    private var produced = 0
-
-    public init(url: URL, chunkSeconds: Double = 0.5) throws {
-        file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
-        duration = Double(file.length) / file.processingFormat.sampleRate
-        resampler = try Resampler(inputFormat: file.processingFormat)
-        let frames = AVAudioFrameCount(file.processingFormat.sampleRate * chunkSeconds)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) else {
-            throw ResamplerError.unsupportedFormat(file.processingFormat.description)
-        }
-        self.buffer = buffer
-    }
-
-    /// The next chunk, timed from the start of the file; nil at the end.
-    public func next() throws -> AudioChunk? {
-        while file.framePosition < file.length {
-            try file.read(into: buffer, frameCount: buffer.frameCapacity)
-            if buffer.frameLength == 0 { return nil }
-            let samples = try resampler.convert(buffer)
-            if samples.isEmpty { continue }
-            defer { produced += samples.count }
-            return AudioChunk(samples: samples, time: Double(produced) / AudioChunk.samplesPerSecond)
-        }
-        return nil
-    }
-}

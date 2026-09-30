@@ -35,7 +35,7 @@ struct Transcribe: AsyncParsableCommand {
         for (channel, path) in [(Channel.room, room), (.remote, remote)] {
             guard let path else { continue }
             let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-            readers.append((channel, try AudioFileReader(url: url)))
+            readers.append((channel, try await AudioFileReader.open(url)))
             sources[channel] = url.lastPathComponent
         }
 

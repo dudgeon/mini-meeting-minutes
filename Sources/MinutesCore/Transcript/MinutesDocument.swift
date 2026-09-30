@@ -18,11 +18,25 @@ public struct MinutesDocument: Sendable {
     public var consentConfirmedAt: Date?
     /// While recording, labels can still change; the header says so.
     public var inProgress: Bool
+    /// Set when the minutes come from a recording someone already had, rather than a live meeting.
+    public var recording: Recording?
+
+    /// A recording transcribed after the fact: its file name, and how long it runs (the minutes
+    /// may cover less, if transcribing was stopped early).
+    public struct Recording: Sendable, Equatable {
+        public var name: String
+        public var length: TimeInterval
+
+        public init(name: String, length: TimeInterval) {
+            self.name = name
+            self.length = length
+        }
+    }
 
     public init(
         title: String, startDate: Date, duration: TimeInterval = 0, sources: [Channel: String],
         redaction: Set<PIICategory>, echoCancellation: Bool, turns: [Turn] = [], names: [SpeakerID: String] = [:],
-        notes: [Note] = [], consentConfirmedAt: Date? = nil, inProgress: Bool = true
+        notes: [Note] = [], consentConfirmedAt: Date? = nil, inProgress: Bool = true, recording: Recording? = nil
     ) {
         self.title = title
         self.startDate = startDate
@@ -35,6 +49,7 @@ public struct MinutesDocument: Sendable {
         self.notes = notes
         self.consentConfirmedAt = consentConfirmedAt
         self.inProgress = inProgress
+        self.recording = recording
     }
 
     public func name(of speaker: SpeakerID) -> String {
@@ -101,13 +116,24 @@ public struct MinutesDocument: Sendable {
         dateFormatter.dateStyle = .full
         dateFormatter.timeStyle = .short
         lines.append("- **Date:** \(dateFormatter.string(from: startDate))")
-        lines.append("- **Duration:** \(Self.durationText(duration))")
-
-        let audio = Channel.allCases.compactMap { channel -> String? in
-            guard let source = sources[channel] else { return nil }
-            return channel == .room ? "microphone (\(source))" : "system audio (\(source))"
+        if let recording, !inProgress, recording.length - duration > 1 {
+            lines.append(
+                "- **Duration:** \(Self.durationText(duration)) (stopped early; the recording runs "
+                    + "\(Self.durationText(recording.length)))")
+        } else {
+            lines.append("- **Duration:** \(Self.durationText(duration))")
         }
-        lines.append("- **Audio:** \(audio.joined(separator: " and "))" + (echoCancellation ? ", echo-cancelled" : ""))
+
+        if let recording {
+            lines.append("- **Audio:** the recording “\(recording.name)”, which was only read")
+        } else {
+            let audio = Channel.allCases.compactMap { channel -> String? in
+                guard let source = sources[channel] else { return nil }
+                return channel == .room ? "microphone (\(source))" : "system audio (\(source))"
+            }
+            lines.append(
+                "- **Audio:** \(audio.joined(separator: " and "))" + (echoCancellation ? ", echo-cancelled" : ""))
+        }
 
         var speakerNames: [String] = []
         for speaker in speakers where !speakerNames.contains(name(of: speaker)) {
@@ -118,17 +144,28 @@ public struct MinutesDocument: Sendable {
         lines.append("- **Redacted:** \(redacted.isEmpty ? "nothing (redaction off)" : redacted.joined(separator: ", "))")
         if let consentConfirmedAt {
             let timeFormatter = DateFormatter()
-            timeFormatter.dateStyle = .none
             timeFormatter.timeStyle = .short
-            lines.append(
-                "- **Consent:** at \(timeFormatter.string(from: consentConfirmedAt)), the person recording confirmed "
-                    + "that everyone taking part had been told the conversation would be recorded and transcribed, "
-                    + "and had agreed")
+            if recording != nil {
+                // Transcribed later, maybe much later: the confirmation's own date matters.
+                timeFormatter.dateStyle = .medium
+                lines.append(
+                    "- **Consent:** on \(timeFormatter.string(from: consentConfirmedAt)), the person transcribing it "
+                        + "confirmed that everyone in the recording had known it was being recorded, and had agreed "
+                        + "to it being transcribed")
+            } else {
+                timeFormatter.dateStyle = .none
+                lines.append(
+                    "- **Consent:** at \(timeFormatter.string(from: consentConfirmedAt)), the person recording "
+                        + "confirmed that everyone taking part had been told the conversation would be recorded and "
+                        + "transcribed, and had agreed")
+            }
         }
         lines.append("")
         lines.append(
             inProgress
-                ? "> Recording in progress. Speaker labels may change when the meeting ends."
+                ? recording == nil
+                    ? "> Recording in progress. Speaker labels may change when the meeting ends."
+                    : "> Transcribing in progress. Speaker labels may change when it's done."
                 : "> Transcribed on this Mac by mini-meeting-minutes. No audio was stored.")
         lines.append("")
         lines.append("---")

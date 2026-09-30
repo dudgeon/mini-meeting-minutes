@@ -52,9 +52,14 @@ system audio ─────────────────┤
 
 **The end of the meeting.**
 
-- Everything still in progress is finished, and every speaker turn in the meeting is compared with
-  every other, which fixes labels that drifted.
+- Everything still in progress is finished. Then every speaker turn in the meeting is checked
+  against each speaker's overall voice, which fixes labels that drifted. The check takes time in
+  proportion to the meeting's length, not its square.
 - Names given during the meeting move with the voices they belong to.
+
+**Recordings you already have** take the same path, read from the file as fast as the Mac allows.
+The readings of unfinished sentences are skipped, since each sentence is complete moments later
+anyway.
 
 **Redaction** runs on each passage before it's shown or saved:
 
@@ -90,6 +95,30 @@ room, two on the call) on an M6 Mac mini:
 | Redaction of a passage | about 1 ms |
 | Echo removal, for 49 seconds of audio | 0.1 s in all |
 | Transcribing a 49-second recording from files, including loading the models | 3.8 s, using about 610 MB of memory |
+
+A recording you already have is read at about 75 times real time: a 3-minute voice memo took
+2.5 seconds.
+
+## Memory
+
+Measured with a 2-hour synthetic meeting played through the app, sampling its memory every 5
+seconds:
+
+- **About 630 MB at the peak, while the models load.** The same peak shows up in a 5-minute
+  meeting, so it doesn't grow with length.
+- **250–480 MB while recording, and flat.** The median rose only from about 361 MB to about
+  374 MB between minute 15 and minute 120.
+- **Speaker labels kept pace throughout,** trailing the audio by the same 3–4 seconds at the end as
+  at the start.
+
+What's held stays small:
+- **Audio:** at most about 30 seconds per channel, while its speakers are worked out. The screen
+  shows how much.
+- **What grows with the meeting:** the text, and one voice fingerprint (about 1 KB) per speaker
+  turn. That's a megabyte or two an hour.
+
+The one way memory could climb is a Mac too slow to keep up: audio would queue in memory while it
+waits. The [roadmap](ROADMAP.md#running-well-on-smaller-macs) caps that queue.
 
 What you see on screen is shaped mostly by waiting on purpose, not by computing:
 

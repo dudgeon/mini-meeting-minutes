@@ -53,6 +53,8 @@ enum ScreenAction: Sendable, Equatable {
     case consent, decline
     /// After saving: another recording, the minutes, or done.
     case newMeeting, open, reveal, quit
+    /// Before recording or after saving: transcribe a recording instead, chosen in the Open window.
+    case openRecording
 }
 
 /// An off-screen grid of cells that views draw into; `Screen` puts it on the terminal.

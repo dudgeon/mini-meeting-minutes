@@ -83,12 +83,13 @@ struct MinutesOptions: ParsableArguments {
         return candidate
     }
 
-    /// Where to write the minutes for a meeting that started at `date`.
-    func outputURL(startedAt date: Date) -> URL {
+    /// Where to write the minutes for a meeting that started at `date`. `name` stands in for a
+    /// title not given on the command line (a recording's own title, say).
+    func outputURL(startedAt date: Date, name: String? = nil) -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HHmm"
-        let cleanTitle = (title ?? "Meeting").components(separatedBy: CharacterSet(charactersIn: "/:\\\n")).joined(
-            separator: "-")
+        let cleanTitle = (title ?? name ?? "Meeting").components(separatedBy: CharacterSet(charactersIn: "/:\\\n"))
+            .joined(separator: "-")
         let fileName = "\(formatter.string(from: date)) \(cleanTitle).md"
 
         guard let output else {
