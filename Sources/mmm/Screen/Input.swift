@@ -10,12 +10,30 @@ enum Key: Sendable, Equatable {
     case wheelUp, wheelDown
     /// Pasted text, delivered whole (bracketed paste), so a paste can't set off shortcuts.
     case paste(String)
+    /// F1 to F12, by number. On a Mac keyboard the ⏯ key is F8, with fn held.
+    case function(Int)
 }
 
 /// Turns raw terminal input bytes into `Key`s: UTF-8 text, control keys, escape sequences for
 /// arrows and paging, SGR mouse reports, and bracketed pastes.
 struct KeyParser {
     private static let pasteEnd: [UInt8] = Array("\u{1B}[201~".utf8)
+    private static let functionKeys: [String: Int] = [
+        "P": 1, "Q": 2, "R": 3, "S": 4, "15~": 5, "17~": 6, "18~": 7, "19~": 8, "20~": 9, "21~": 10, "23~": 11,
+        "24~": 12,
+    ]
+
+    /// F1 to F12 from the end of an escape sequence: "P" to "S" for F1–F4, "15~" to "24~" above,
+    /// with any modifiers (";2") dropped.
+    private static func functionKey(_ sequence: String) -> Int? {
+        if sequence.hasSuffix("~") {
+            return functionKeys[(sequence.dropLast().split(separator: ";").first.map(String.init) ?? "") + "~"]
+        }
+        guard let last = sequence.last, "PQRS".contains(last),
+            sequence.dropLast().allSatisfy({ $0.isNumber || $0 == ";" })
+        else { return nil }
+        return functionKeys[String(last)]
+    }
 
     private var escape: [UInt8] = []
     private var utf8: [UInt8] = []
@@ -73,6 +91,7 @@ struct KeyParser {
         }
         let sequence = String(decoding: escape.dropFirst(2), as: UTF8.self)
         escape.removeAll()
+        if let number = Self.functionKey(sequence) { return [.function(number)] }
         switch sequence {
         case "A": return [.up]
         case "B": return [.down]

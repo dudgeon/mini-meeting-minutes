@@ -76,8 +76,9 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
    conversation is being recorded and transcribed, and has agreed. Nothing is recorded until then,
    but the meters already move, so you can check that your microphone is heard.
 4. To jot something down, just type it and press **Return**. It goes into the transcript at the
-   moment you started typing. While recording, commands start with a slash, so typing a note can
-   never set one off: **/pause**, **/name** to name the speakers, and **/help** for the rest.
+   moment you started typing. **Space** pauses and resumes: a note never starts with a space, so
+   the two don't clash. Other commands start with a slash, so a note can never set one off:
+   **/name** to name the speakers, and **/help** for the rest.
 5. When the meeting is over, type **/stop** and press **Return** (or press **Ctrl-C**). Type a
    name for each speaker (or press **Return** to skip them). Then press **Return** to open your
    minutes, **Space** to record another meeting, or **Q** to quit.

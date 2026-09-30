@@ -818,9 +818,14 @@ struct LiveScreen {
             live.update { $0.help = false }
             return
         }
-        // While a meeting runs, the prompt box takes everything typed: a note, or a command after
-        // a slash. So no sentence typed into it can stop, pause or rearrange the meeting.
-        // Scrolling and clicks work as usual.
+        // F8 (the ⏯ key, with fn) does what Space does, even partway through a note.
+        if case .function(8) = key {
+            perform(.pause, snapshot: snapshot, live: live, controls: controls)
+            return
+        }
+        // While a meeting runs, the prompt box takes what's typed: a note, or a command after a
+        // slash. So no sentence typed into it can stop or rearrange the meeting. Scrolling and
+        // clicks work as usual.
         if snapshot.started && !snapshot.stopping && !snapshot.finished && type(key, live: live, controls: controls) {
             return
         }
@@ -979,12 +984,18 @@ struct LiveScreen {
     }
 
     /// Types into the prompt box while a meeting runs: a note, added where typing began when
-    /// Return is pressed, or a command after a slash, run by Return. Escape clears it. Returns
-    /// false for keys that aren't typing (scrolling, clicks).
+    /// Return is pressed, or a command after a slash, run by Return. Escape clears it. Space
+    /// before any note pauses. Returns false for keys that aren't typing (scrolling, clicks).
     private static func type(_ key: Key, live: LiveState, controls: Controls) -> Bool {
         switch key {
         case .char, .paste, .backspace, .enter, .escape, .tab: break
         default: return false
+        }
+        // A note never starts with a space, so Space pauses and resumes whenever no note is under
+        // way, as it always has. Within a note, it's just a space.
+        if case .char(" ") = key, live.snapshot.draft?.text.isEmpty ?? true {
+            perform(.pause, snapshot: live.snapshot, live: live, controls: controls)
+            return true
         }
         var command: Command?
         var added = false

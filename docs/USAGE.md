@@ -29,8 +29,10 @@ mmm transcribe --room mic.m4a --remote call.m4a   # separate room and call recor
 3. **Recording.**
    - Words appear as people speak, and who said them follows a couple of seconds after a pause.
    - To add a note, just type it and press **Return**.
-   - Commands start with a slash, so a note can never set one off: **/name** names the speakers,
-     and **/pause** pauses.
+   - **Space** pauses and resumes whenever you're not typing a note. **F8** does too, even
+     partway through a note.
+   - Other commands start with a slash, so a note can never set one off: **/name** names the
+     speakers.
 4. **/stop to finish** (or **Ctrl-C**).
    - Everything still in progress is finished, and every speaker is re-checked across the whole
      meeting.
@@ -48,14 +50,15 @@ step.
 
 ## Keys and commands
 
-**During a meeting**, the box at the bottom always takes a note. Commands start with a slash, so no
-sentence you type can stop, pause or change the meeting by accident:
+**During a meeting**, the box at the bottom takes notes, and commands start with a slash, so no
+sentence you type can stop or change the meeting by accident. Space pauses, since a note never
+starts with one:
 
 | Type | Does |
 |---|---|
 | Anything | A note. **Return** adds it where you started typing, **Esc** drops it |
+| **Space** or **F8** | Pause, or resume. Paused audio is dropped, not buffered. Space does this when no note is being typed; F8 any time. Typing **/pause** works too |
 | **/stop** | Stop and save. **Ctrl-C** does the same |
-| **/pause** | Pause, or resume. Paused audio is dropped, not buffered |
 | **/name** | Name the speakers, any time |
 | **/look** | Switch between the sidebar and synthwave mode |
 | **/visual** | Switch the visualizer: spectrum, waveform, off |
@@ -64,6 +67,10 @@ sentence you type can stop, pause or change the meeting by accident:
 Typing a slash lists the commands; **Return** runs the one that fits, and **Tab** completes its
 name. **↑ ↓**, Page Up/Down and the mouse wheel scroll the transcript, and **End** jumps back to
 the newest line.
+
+On a Mac keyboard, **F8** is the ⏯ key. Hold **fn** as you press it, or macOS gives it to Music
+instead. To make it work without **fn**, turn on *Use F1, F2, etc. keys as standard function
+keys* in System Settings › Keyboard › Keyboard Shortcuts › Function Keys.
 
 **Before a meeting starts**, and once its minutes are saved, single keys do things:
 
@@ -130,7 +137,7 @@ For a voice memo, drag it from Voice Memos to your desktop first.
    - a progress bar and the speed show how far along it is;
    - an hour-long recording takes about a minute on a recent Mac.
 
-   Typing adds a note at that point in the recording, **/pause** pauses, **/name** names speakers,
+   Typing adds a note at that point in the recording, **Space** pauses, **/name** names speakers,
    and **/stop** stops early and keeps what's been transcribed.
 3. **Saved.** The minutes are dated from the recording and titled with its name (a voice memo's
    own title is used).

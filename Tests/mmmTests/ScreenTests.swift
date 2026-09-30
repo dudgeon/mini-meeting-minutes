@@ -31,6 +31,14 @@ import Testing
         #expect(keys("\u{1B}[200~quick\nnote\u{1B}[201~x") == [.paste("quick\nnote"), .char("x")])
     }
 
+    @Test func functionKeys() {
+        // F8 (the ⏯ key with fn) as Terminal and iTerm send it, with and without modifiers; F1.
+        #expect(keys("\u{1B}[19~") == [.function(8)])
+        #expect(keys("\u{1B}[19;2~") == [.function(8)])
+        #expect(keys("\u{1B}OP") == [.function(1)])
+        #expect(keys("\u{1B}[5~\u{1B}[A") == [.pageUp, .up])  // other sequences are unchanged
+    }
+
     @Test func escapeOnItsOwn() {
         var parser = KeyParser()
         #expect(parser.feed(0x1B).isEmpty)
@@ -315,9 +323,33 @@ final class Calls<Value: Sendable>: Sendable {
         #expect(live.snapshot.askingConsent)
         press(.char("y"))
         #expect(live.snapshot.started && live.snapshot.consentedAt != nil && !paused.isPaused)
-        type("/pause")
-        press(.enter)
+        press(.char(" "))
         #expect(paused.isPaused && live.snapshot.paused && live.snapshot.draft == nil)
+    }
+
+    @Test func spaceAndF8PauseUnlessANoteIsUnderWay() {
+        press(.char(" "), .char("y"))
+        press(.char(" "))  // no note under way: pause...
+        #expect(paused.isPaused && live.snapshot.draft == nil)
+        press(.char(" "))  // ...and resume
+        #expect(!paused.isPaused)
+        type("call vendor")  // within a note, a space is a space
+        #expect(!paused.isPaused && live.snapshot.draft?.text == "call vendor")
+        press(.function(8))  // F8 pauses even partway through a note, which stays
+        #expect(paused.isPaused && live.snapshot.draft?.text == "call vendor")
+        press(.function(8))
+        #expect(!paused.isPaused)
+        press(.enter)
+        #expect(live.snapshot.notes.map(\.text) == ["call vendor"])
+        press(.char(" "))  // the note's added: Space pauses again
+        #expect(paused.isPaused)
+        press(.char(" "), .char("x"), .backspace)  // resume; then a note typed and rubbed out...
+        #expect(!paused.isPaused && live.snapshot.draft == nil)
+        press(.char(" "))  // ...leaves none under way, so Space pauses
+        #expect(paused.isPaused)
+        type("/pause")  // and the command works too
+        press(.enter)
+        #expect(!paused.isPaused)
     }
 
     @Test func sentencesTypedInAMeetingOnlyEverBecomeNotes() async {

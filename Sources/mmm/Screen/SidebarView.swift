@@ -98,15 +98,13 @@ struct SidebarView {
                 ("k", "synthwave", .skin), ("?", "all shortcuts", .help),
             ]
         }
-        // During a meeting, typing takes notes, so commands start with a slash.
+        // During a meeting, typing takes notes, so commands start with a slash. Space still pauses:
+        // a note never starts with one.
         return [
-            ("/stop", "stop and save", .stop), ("/pause", state.paused ? "resume" : "pause", .pause),
+            ("space", state.paused ? "resume" : "pause", .pause), ("/stop", "stop and save", .stop),
             ("/name", "name speakers", .name), ("/look", "synthwave", .skin), ("/help", "all commands", .help),
         ]
     }
-
-    /// While a meeting runs, the prompt box takes notes, and commands start with a slash.
-    private var typing: Bool { state.started && !state.stopping && !state.finished && state.saved == nil }
 
     // MARK: - Sidebar
 
@@ -128,7 +126,7 @@ struct SidebarView {
         // down from the top; in a short window speakers get one row each, then privacy and
         // listening make way.
         let keysTop = height - 8
-        heading(typing ? "COMMANDS" : "KEYS", y: keysTop)
+        heading("KEYS", y: keysTop)
         for (index, key) in keyList.enumerated() {
             let y = keysTop + 1 + index
             canvas.text(4, y, key.key, fg: Palette.accent, bg: bg)
@@ -399,7 +397,7 @@ struct SidebarView {
                     ("k", "synthwave", .skin), ("?", "help", .help),
                 ]
                 : [
-                ("/stop", "stop", .stop), ("/pause", state.paused ? "resume" : "pause", .pause),
+                ("space", state.paused ? "resume" : "pause", .pause), ("/stop", "stop", .stop),
                 ("/name", "name", .name), ("/look", "synthwave", .skin), ("/help", "help", .help),
             ]
         for key in keys {
@@ -437,8 +435,8 @@ struct SidebarView {
             canvas.text(
                 x + 5, y,
                 state.recording == nil
-                    ? "Paused: nothing is being recorded. Type /pause to carry on, or type a note."
-                    : "Paused. Type /pause to carry on transcribing.", fg: Palette.amber, limit: w - 7)
+                    ? "Paused: nothing is being recorded. Press space to carry on, or type a note."
+                    : "Paused. Press space to carry on transcribing.", fg: Palette.amber, limit: w - 7)
             canvas.region(x, top, w, 3, .note)
         } else {
             var placeholder =

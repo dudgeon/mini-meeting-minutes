@@ -297,7 +297,7 @@ struct SynthwaveView {
         }
         var keys: [(String, String, ScreenAction)] =
             state.started && !state.stopping && !state.finished && state.saved == nil
-            ? [("/STOP", "SAVE", .stop), ("/PAUSE", state.paused ? "RESUME" : "PAUSE", .pause),
+            ? [("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("/STOP", "SAVE", .stop),
                ("/NAME", "NAME", .name), ("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer),
                ("/HELP", "HELP", .help)]
             : state.saved != nil

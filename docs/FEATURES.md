@@ -37,7 +37,8 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 - **For focused sessions.** The confirmation also says what the app is meant for: sessions where
   everyone has agreed to a transcript, such as user research or stakeholder interviews. It adds
   that company policy may not allow recording routine meetings.
-- **Pause and resume** with **/pause**. Paused audio is dropped, not held for later.
+- **Pause and resume** with **Space**, or **F8** (the ⏯ key, with fn). Paused audio is dropped,
+  not held for later.
 - **Stop** with **/stop**, **Ctrl-C** or by closing the window. The minutes are saved either way.
 - **Another meeting straight after.** When the minutes are saved, press **Space** to set up the
   next one. The models stay loaded, so there's no wait.
@@ -66,7 +67,8 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 
 - **Write notes during the meeting.** Just type, and press **Return** to add the note (**Esc**
   drops it). The box grows as you type, up to 1,000 characters, and pasting works.
-- **Typing can't set off a command.** During a meeting commands start with a slash, so a note like
+- **Typing can't set off a command.** During a meeting commands start with a slash, and Space
+  pauses only when no note is being typed (a note never starts with a space). So a note like
   "quick question: please pause" stays a note.
 - **In the right place.** A note goes into the transcript at the moment you started typing, and
   never splits someone's paragraph: one typed while someone was talking comes right after what they
