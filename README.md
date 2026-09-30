@@ -1,17 +1,38 @@
 # Mini Meeting Minutes
 
-Mini Meeting Minutes writes down what was said in your meetings, and who said it, entirely on
-your Mac. It listens to the people in the room and to the people on your call, then saves the
-conversation as text, with ID, card and account numbers blanked out.
-
-- **Private.** Nothing leaves your Mac and the audio is never saved. Only the written minutes are.
-- **Word for word.** No AI summaries: the minutes are exactly what was said.
+Mini Meeting Minutes writes down what was said in your meetings, and who said it, entirely on your
+Mac. It listens to the people in the room and the people on your call, and saves the conversation
+as plain text you can keep, search and share, with your own notes in place.
 
 ![Mini Meeting Minutes recording a meeting: after confirming everyone has agreed to be recorded, what people say appears as they say it, then each line is attributed to a speaker; a note is added, and the saved minutes stay on screen](docs/demo.gif)
 
-*A short meeting (made with macOS voices) running through Mini Meeting Minutes about four times
-faster than real time. A note gets added, synthwave mode makes an appearance, and the speakers get
-named at the end.*
+*A short meeting (made with macOS voices) running about four times faster than real time.
+Recording starts once everyone's agreement is confirmed, and words appear as they're spoken. A
+note gets added, synthwave mode makes an appearance, and the speakers get named at the end.*
+
+## What it's for
+
+Minutes are only as useful as they are accurate, and only as safe as the place they're kept.
+Mini Meeting Minutes is built around a few promises:
+
+- **Nothing leaves your Mac.** Speech recognition, telling voices apart, echo removal and
+  redaction all run on your Mac's own chips. The app makes no network connections, and there's no
+  account, cloud service or subscription.
+- **No audio is ever saved.** Sound stays in memory only as long as it takes to transcribe (about
+  30 seconds at most), then it's gone. Only the written minutes are kept.
+- **Word for word.** No AI summaries and no generative models: the minutes are what was said, by
+  who said it.
+- **Consent first.** Nothing is recorded until you confirm that everyone taking part knows and
+  agrees.
+- **Sensitive numbers blanked out.** Social Security, card and account numbers are removed before
+  anything is shown or saved. Names, emails and phone numbers can be too.
+- **Works where you meet:** in person, on a call, or both, with speakers or headphones, and with
+  any meeting app.
+- **Easy for anyone.** One line to install, a Desktop shortcut to start, and a few keys to learn.
+- **Nothing hidden.** It's open source, and every speech model ships in this repository, with
+  checksums and licenses.
+
+Read more in [Features](docs/FEATURES.md) and [Privacy and security](docs/PRIVACY-AND-SECURITY.md).
 The minutes it saves look like this:
 
 ```markdown
@@ -76,189 +97,31 @@ curl -fsSL https://raw.githubusercontent.com/dudgeon/mini-meeting-minutes/main/i
 
 ---
 
-*Everything below is extra detail; you don't need it to use Mini Meeting Minutes.*
+## Learn more
 
-## Using it from Terminal
-
-After installing, open a new Terminal window and type `mmm`, optionally with options:
-
-```sh
-mmm                                  # microphone + system audio
-mmm --title "Roadmap review"         # title for the file name and heading
-mmm --no-mic                         # a call on headphones: remote side only
-mmm --no-system                      # an in-person meeting: room only
-mmm --output ~/Notes/                # a folder, or a file name ending in .md
-mmm doctor                           # check the models, permissions and microphones
-```
-
-While recording, a sidebar shows the clock, each speaker's share of the talking, what the
-microphone and system audio are hearing, and the privacy settings, beside the transcript. Words
-appear as people speak. Who said them follows a couple of seconds after a pause, and within about
-30 seconds even in non-stop conversation. Press **K** for synthwave mode: a pixel-art sunset whose city
-skyline dances to the microphone (left of the sun) and the call (right).
-
-Notes you type land in the transcript at the moment you started typing, right after whatever was
-being said, and in the saved minutes as quotes. They're saved exactly as you typed them: redaction
-applies only to what people said.
-
-| Key | Does |
+| | |
 |---|---|
-| **Return** | Write a note; **Return** again adds it, **Esc** cancels |
-| **Space** | Start recording (after you confirm everyone has agreed); then pause or resume (paused audio is dropped, not buffered) |
-| **Q** or Ctrl-C | Stop and save |
-| **N** | Name the speakers, any time |
-| **V** | Switch the visualizer: spectrum, waveform, off |
-| **K** | Switch between the sidebar and synthwave mode |
-| **↑ ↓**, Page Up/Down, mouse wheel | Scroll the transcript; **F** jumps back to the newest line |
-| **?** | Help |
-
-The keys listed on screen are clickable too. Because the screen takes mouse clicks, hold
-**⌥ Option** to select text with the mouse. Narrow windows hide the sidebar, and synthwave mode's
-picture shrinks with the window.
-
-When you stop, `mmm` re-examines every speaker across the whole meeting, which can renumber a few
-labels (names you gave follow the right person), then asks you to name each speaker, showing
-something they said. The minutes are written to `~/Documents/Minutes/` and kept up to date during
-the meeting, so a crash loses at most the last minute or so. Closing the window (or quitting
-Terminal) stops the recording just like **Q** and saves the minutes, keeping any names you gave
-along the way; it just can't ask for the rest.
-
-No microphone connected? `mmm` records the call audio, and starts using a microphone as soon as
-you connect one.
-
-| Option | Effect |
-|---|---|
-| `--redact <list>` | What to blank out: `all`, `none`, or a comma-separated list of `name`, `email`, `phone`, `address`, `id`, `card`, `account`, `ip`. The default is `id,card,account`. |
-| `--keep <words>` | With `name` redaction on: words never to take for names, such as your company's products. They add to any listed in `Documents/Minutes/Words to keep.txt`. |
-| `--no-echo-cancel` | Skip echo cancellation. It's only needed when the call plays through speakers; with headphones you can turn it off. |
-| `--mic-device <uid>` | Use a specific microphone. `mmm doctor` lists them. |
-| `--no-names` | Don't ask for speaker names at the end. |
-| `--skin <name>` | Start in `sidebar` (the default) or `synthwave` mode. |
-
-To transcribe recordings you already have (they're only read, never changed):
-
-```sh
-mmm transcribe --room mic.m4a --remote call.m4a
-mmm transcribe --remote zoom-recording.m4a --stdout
-```
-
-### Permissions
-
-macOS grants the microphone and system audio permissions to the app that runs `mmm`: Terminal
-when you use the Desktop shortcut, or whichever terminal you type `mmm` in (iTerm, Ghostty, …).
-Some terminals, including iTerm, never show the system audio prompt; add them by hand under
-**Screen & System Audio Recording › System Audio Recording Only**. Granting a permission to a
-terminal grants it to everything you run in that terminal.
-
-macOS doesn't report a missing system audio permission; it just delivers silence. `mmm` warns you
-when system audio stays silent while other apps are playing sound.
-
-### What the installer does
-
-It checks your Mac, installs Apple's command line developer tools if needed (they include Swift,
-which builds the app), downloads this repository to `~/Applications/mini-meeting-minutes`, builds
-it, and verifies the speech models. Then it puts the **Mini Meeting Minutes** shortcut on your
-Desktop and the `mmm` command in `~/.local/bin`, adding that folder to your `PATH` in
-`~/.zprofile`. Nothing needs an administrator password. The log is at
-`~/Library/Logs/mini-meeting-minutes-install.log`.
-
-## How it works
-
-```
-microphone ──► echo cancellation ──┐        (system audio is the echo reference)
-system audio ──────────────────────┤
-                                   ▼  per channel
-           voice activity ──► speech recognition ──► words with timestamps
-                   │
-                   └► 30–60 s window ──► diarization ──► voice embedding per segment
-                                                               │
-                meeting-wide speaker matching ◄────────────────┘
-                                   │
-                                   ▼
-                     words → speakers → PII redaction → markdown
-```
-
-- **Two channels.** The microphone is the *room* and system audio is the *remote* side. Each
-  channel is transcribed and diarized separately, so labels read "Room 1" or "Remote 2".
-- **Echo cancellation** ([LocalVQE](https://github.com/localai-org/LocalVQE)) removes
-  remote voices that reach the microphone through your speakers, using the captured system audio as
-  the reference. Without it, every remote sentence would also be transcribed as a room speaker.
-- **Speech recognition** is [Parakeet](https://huggingface.co/moondream/parakeet-redux), a
-  transducer model rather than a language model, which makes it far less prone to inventing text.
-  It covers English and 24 other European languages. Voice activity detection
-  ([Silero](https://github.com/snakers4/silero-vad)) cuts speech into utterances.
-- **Diarization** runs the pyannote community-1 pipeline on rolling 30–60 second windows. Each
-  diarized segment then gets its own voice embedding. Speakers are matched across windows by voice,
-  and at the end every segment is re-clustered together, so labels stay consistent across a
-  multi-hour meeting without keeping audio.
-- **Redaction** runs on device: Apple's named-entity recognizer and a 20,000-name first-name list
-  for names, data detectors for phone numbers and street addresses, and patterns for emails, ID,
-  card, account and IP numbers. The patterns include spoken and misrecognized forms such as "jane
-  dot doe at example dot com" or "415. 555, 0132". Organization and place names are kept.
-- **Self-contained.** Every model ships in this repository (about 260 MB), so nothing is
-  downloaded at runtime.
-
-### What is and isn't kept
-
-| Data | Where | How long |
-|---|---|---|
-| Audio | Memory only | Up to about 30 seconds per channel (the current diarization window), then released |
-| Unredacted text | Memory only | Until its window is attributed and redacted |
-| Voice embeddings (numeric voice fingerprints) | Memory only | Until the meeting ends |
-| Minutes | The markdown file | Yours to keep; redacted before writing |
-
-No audio is ever written to disk. The app
-makes no network requests: FluidAudio's model downloader is switched off. Installing and building
-need the network to fetch the repository and Swift packages.
+| [Features](docs/FEATURES.md) | Everything it does, and the kinds of meetings it works in |
+| [Privacy and security](docs/PRIVACY-AND-SECURITY.md) | The trust model: what's kept where, what never leaves your Mac, and what redaction does and doesn't do |
+| [Using it from Terminal](docs/USAGE.md) | The `mmm` command, keys, options, permissions, and what the installer does |
+| [How it works](docs/HOW-IT-WORKS.md) | The pipeline, the models, and how fast it is |
+| [Roadmap](docs/ROADMAP.md) | What's next, including running well on smaller Macs |
+| [Development](docs/DEVELOPMENT.md) | Building, testing, diagnostics and the code layout |
+| [Models](Models/README.md) | The vendored models, their licenses and citations |
+| [Security policy](SECURITY.md) | How to report a vulnerability |
 
 ## Limitations
 
-- **Speaker labels are anonymous and per channel.** `mmm` distinguishes voices; it doesn't know
-  who anyone is until you name them. People sharing one microphone are separated by voice, which
-  is harder than separating people on different channels.
+- **Speaker labels are anonymous and per channel.** Voices are told apart, but no one is
+  identified until you name them. People sharing one microphone are separated by voice alone,
+  which is harder than separating the room from the call.
 - **Overlapping speech** is attributed to whoever dominates it.
-- **Redaction is best effort.** By default only ID, card and account numbers are blanked out;
-  names, emails and phone numbers are kept unless you turn them on with `--redact`. Misrecognized
-  names ("Praya" for Priya) and surnames on their own can slip through. Read the minutes before
-  sharing them.
-- **Echo cancellation is beta** upstream. If remote voices still show up as room speakers, wear
-  headphones or use `--no-mic`.
-- Name redaction is tuned for English.
-
-## Development
-
-```sh
-git clone https://github.com/dudgeon/mini-meeting-minutes && cd mini-meeting-minutes
-./mmm doctor                                   # builds on first run, then checks everything
-swift build --disable-keychain                 # debug build
-swift test --disable-keychain                  # tests; see the note below
-python3 scripts/e2e_check.py                   # a synthetic call through the whole pipeline
-MMM_DEBUG=1 ./mmm transcribe --room a.wav      # print utterances (unredacted), windows, speaker matching
-```
-
-`./mmm` rebuilds itself whenever the sources change. `--disable-keychain` stops SwiftPM from
-blocking on a keychain prompt while it fetches packages. With only the Command Line Tools
-installed, `swift test` needs the testing plugin's path:
-`swift test --disable-keychain -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`.
-
-`mmm record --replay-room a.wav --replay-remote b.wav [--replay-speed 4]` (hidden options) plays
-files through the live path, including the screen, without touching capture devices or
-permissions. The installer honors `MMM_REPO`, `MMM_BRANCH` and `MMM_HOME` for testing.
-
-| Path | What |
-|---|---|
-| `Sources/MinutesCore/Capture/` | Microphone (AVAudioEngine) and system audio (Core Audio process tap) capture |
-| `Sources/MinutesCore/Pipeline/` | Session, per-channel pipeline, echo cancellation, speaker embedding and matching |
-| `Sources/MinutesCore/Redaction/` | PII redaction |
-| `Sources/MinutesCore/Transcript/` | Turns and the markdown document |
-| `Sources/mmm/` | Command line and first-run setup |
-| `Sources/mmm/Screen/` | The recording screen: the sidebar and synthwave looks, drawing, visualizers and input |
-| `Models/` | Vendored Core ML models; see [Models/README.md](Models/README.md) |
-| `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (end-to-end check with `say` voices); maintainer tools `vendor_models.py` (models), `generate_first_names.py` (name list) and `record_demo.py` (the README animation, `docs/demo.gif`, drawn by `terminal_render.py`) |
-
-Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
-main-branch commit that includes LocalVQE support.
+- **Redaction is best effort,** and by default covers only ID, card and account numbers. Read your
+  minutes before sharing them.
+- **Echo removal is new** in the toolkit the app is built on (FluidAudio). If people on the call
+  still show up as room speakers, wear headphones or use `mmm --no-mic`.
+- **It needs a Mac with Apple silicon** (M1 or newer) and macOS 15 or newer. Name redaction, when
+  switched on, is tuned for English.
 
 ## License
 
