@@ -531,8 +531,9 @@ struct Record: AsyncParsableCommand {
         if screen == nil && !unattended && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
         // The full path goes on the clipboard, since what's next is often handing the minutes to
-        // someone, or to an AI assistant. Only with a screen: scripts' clipboards are left alone.
-        let copied = terminal != nil && Setup.copyToClipboard(outputURL.path)
+        // someone, or to an AI assistant. Only with a screen, and not for replays (a testing aid):
+        // scripts' clipboards are left alone.
+        let copied = terminal != nil && !replaying && Setup.copyToClipboard(outputURL.path)
         let saved = LiveState.Saved(
             path: outputURL.path, turns: turns.count, speakers: document.speakers.count, copied: copied)
         guard let screen else { return Meeting(saved: saved, look: live.snapshot.look) }
