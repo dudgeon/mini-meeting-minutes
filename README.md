@@ -4,6 +4,8 @@ Mini Meeting Minutes writes down what was said in your meetings, and who said it
 Mac. It listens to the people in the room and the people on your call, and saves the conversation
 as plain text you can keep, search and share, with your own notes in place.
 
+https://github.com/user-attachments/assets/f4e27757-700d-408d-a34e-b7e1553a0507
+
 ![Mini Meeting Minutes recording a meeting: after confirming everyone has agreed to be recorded, what people say appears as they say it, then each line is attributed to a speaker; a note is added, and the saved minutes stay on screen](docs/demo.gif)
 
 *A short meeting (made with macOS voices) running about four times faster than real time.
