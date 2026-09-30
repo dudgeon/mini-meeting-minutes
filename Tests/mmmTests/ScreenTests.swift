@@ -160,6 +160,25 @@ import Testing
         #expect(actions.contains("pause") && actions.contains("stop") && !actions.contains("note"))
     }
 
+    @Test(arguments: Look.allCases)
+    func askingForConsentThenSaved(look: Look) {
+        var state = LiveState.Snapshot()
+        state.channels = [.room, .remote]
+        state.askingConsent = true
+        let asking = Self.render(state, look, 120, 42)
+        #expect(Self.text(asking).lowercased().contains("before you record"))
+        #expect(Self.text(asking).contains("California"))
+        #expect(Set(asking.regions.map { "\($0.action)" }).isSuperset(of: ["consent", "decline"]))
+
+        var saved = Self.snapshot()
+        saved.finished = true
+        saved.saved = LiveState.Saved(path: "/Users/someone/Documents/Minutes/x.md", turns: 2, speakers: 2)
+        let done = Self.render(saved, look, 120, 42)
+        #expect(Self.text(done).lowercased().contains("saved"))
+        #expect(Self.text(done).contains("Good morning everyone."))
+        #expect(Set(done.regions.map { "\($0.action)" }).isSuperset(of: ["newMeeting", "open", "reveal", "quit"]))
+    }
+
     @Test func redactionPlaceholdersStandApart() {
         let segments = ScreenModel.segments("I spoke with [NAME] about [the] budget [EMAIL].")
         #expect(segments.map(\.text) == ["I spoke with ", "[NAME]", " about [the] budget ", "[EMAIL]", "."])
@@ -190,39 +209,57 @@ import Testing
 @Suite struct KeyHandlingTests {
     let live = LiveState()
     let paused = PauseFlag()
-    let stop: AsyncStream<Void>.Continuation
     let saves: AsyncStream<Void>
-    let save: AsyncStream<Void>.Continuation
+    let choices: AsyncStream<Bool>
+    let controls: LiveScreen.Controls
     let naming: AsyncStream<Void>.Continuation
 
     init() {
-        stop = AsyncStream.makeStream(of: Void.self).continuation
+        let live = live
+        let save: AsyncStream<Void>.Continuation
+        let choose: AsyncStream<Bool>.Continuation
         (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        (choices, choose) = AsyncStream.makeStream(of: Bool.self)
+        controls = LiveScreen.Controls(
+            paused: paused, begin: { live.update { $0.startedAt = Date() } },
+            stop: AsyncStream.makeStream(of: Void.self).continuation, save: save, choose: choose)
         naming = AsyncStream.makeStream(of: Void.self).continuation
     }
 
     func press(_ keys: Key...) {
-        let live = live
-        for key in keys {
-            LiveScreen.handle(
-                key, live: live, paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop,
-                save: save, finishNaming: naming)
-        }
+        for key in keys { LiveScreen.handle(key, live: live, controls: controls, finishNaming: naming) }
     }
 
-    @Test func spaceStartsRecordingThenPauses() {
+    @Test func recordingStartsOnlyOnceEveryoneHasAgreed() {
         press(.enter, .char("x"))  // no notes before recording begins
         #expect(!live.snapshot.started && live.snapshot.draft == nil && live.snapshot.notes.isEmpty)
         press(.char(" "))
-        #expect(live.snapshot.started && !paused.isPaused)
+        #expect(live.snapshot.askingConsent && !live.snapshot.started)
+        press(.char("n"))  // not yet
+        #expect(!live.snapshot.askingConsent && !live.snapshot.started && live.snapshot.consentedAt == nil)
+        press(.char(" "), .char("q"))  // other keys don't answer the question
+        #expect(live.snapshot.askingConsent)
+        press(.char("y"))
+        #expect(live.snapshot.started && live.snapshot.consentedAt != nil && !paused.isPaused)
         press(.char(" "))
         #expect(paused.isPaused && live.snapshot.paused)
     }
 
+    @Test func theSavedScreenStartsAnotherMeetingOrQuits() async {
+        live.update { $0.saved = LiveState.Saved(path: "/tmp/minutes.md", turns: 3, speakers: 2) }
+        press(.char(" "), .char("q"))
+        var answers: [Bool] = []
+        for await choice in choices {
+            answers.append(choice)
+            if answers.count == 2 { break }
+        }
+        #expect(answers == [true, false])
+    }
+
     @Test func returnWritesANoteWhereTypingBegan() async {
-        let (live, save, saves) = (live, save, saves)
+        let (live, controls, saves) = (live, controls, saves)
         live.update { $0.elapsed = 10 }
-        press(.char(" "))
+        press(.char(" "), .char("y"))
         press(.enter)
         #expect(live.snapshot.draft != nil)
         live.update { $0.elapsed = 12 }  // typing starts two seconds later...
@@ -232,7 +269,7 @@ import Testing
         press(.enter)
         #expect(live.snapshot.notes == [Note(time: 12, text: "qn next step")])
         #expect(live.snapshot.draft == nil && !live.snapshot.stopping)
-        save.finish()
+        controls.save.finish()
         var requested = 0
         for await _ in saves { requested += 1 }
         #expect(requested == 1)
@@ -244,6 +281,19 @@ import Testing
 }
 
 @Suite struct RecordingPartsTests {
+    @Test func minutesNeverOverwriteEachOther() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mmm-unused-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let first = folder.appendingPathComponent("2026-09-29 2114 Meeting.md")
+        #expect(MinutesOptions.unused(first) == first)
+        try "one".write(to: first, atomically: true, encoding: .utf8)
+        let second = MinutesOptions.unused(first)
+        #expect(second.lastPathComponent == "2026-09-29 2114 Meeting 2.md")
+        try "two".write(to: second, atomically: true, encoding: .utf8)
+        #expect(MinutesOptions.unused(first).lastPathComponent == "2026-09-29 2114 Meeting 3.md")
+    }
+
     @Test func theClockStartsOnce() {
         let clock = RecordingClock()
         #expect(!clock.started && clock.seconds(to: HostTime.now()) == nil)

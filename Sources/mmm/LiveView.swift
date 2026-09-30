@@ -18,10 +18,22 @@ final class LiveState: Sendable {
         var start: TimeInterval?
     }
 
+    /// Minutes saved at the end of a meeting, shown until the next one or quitting.
+    struct Saved: Sendable {
+        let path: String
+        let turns: Int
+        let speakers: Int
+    }
+
     struct Snapshot: Sendable {
         var title = ""
         /// When recording began; nil while waiting for Space.
         var startedAt: Date?
+        /// Asking whether everyone taking part knows about the recording and agrees.
+        var askingConsent = false
+        /// When the person recording confirmed it.
+        var consentedAt: Date?
+        var saved: Saved?
         var elapsed: TimeInterval = 0
         var paused = false
         var stopping = false
@@ -42,7 +54,8 @@ final class LiveState: Sendable {
         var draft: NoteDraft?
         var warnings: [String] = []
         var outputPath = ""
-        var redaction = true
+        /// What's being blanked out.
+        var redaction: Set<PIICategory> = []
         var echoCancellation = false
         var look = Look.sidebar
         var visualizer = VisualizerMode.spectrum

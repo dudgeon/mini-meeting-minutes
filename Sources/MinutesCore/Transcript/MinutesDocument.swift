@@ -14,13 +14,15 @@ public struct MinutesDocument: Sendable {
     /// Names given to speakers; unnamed speakers keep their "Room 1" style label.
     public var names: [SpeakerID: String]
     public var notes: [Note]
+    /// When the person recording confirmed that everyone taking part knew and agreed.
+    public var consentConfirmedAt: Date?
     /// While recording, labels can still change; the header says so.
     public var inProgress: Bool
 
     public init(
         title: String, startDate: Date, duration: TimeInterval = 0, sources: [Channel: String],
         redaction: Set<PIICategory>, echoCancellation: Bool, turns: [Turn] = [], names: [SpeakerID: String] = [:],
-        notes: [Note] = [], inProgress: Bool = true
+        notes: [Note] = [], consentConfirmedAt: Date? = nil, inProgress: Bool = true
     ) {
         self.title = title
         self.startDate = startDate
@@ -31,6 +33,7 @@ public struct MinutesDocument: Sendable {
         self.turns = turns
         self.names = names
         self.notes = notes
+        self.consentConfirmedAt = consentConfirmedAt
         self.inProgress = inProgress
     }
 
@@ -113,6 +116,15 @@ public struct MinutesDocument: Sendable {
         lines.append("- **Speakers:** \(speakerNames.isEmpty ? "none yet" : speakerNames.joined(separator: ", "))")
         let redacted = PIICategory.allCases.filter(redaction.contains).map(\.displayName)
         lines.append("- **Redacted:** \(redacted.isEmpty ? "nothing (redaction off)" : redacted.joined(separator: ", "))")
+        if let consentConfirmedAt {
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateStyle = .none
+            timeFormatter.timeStyle = .short
+            lines.append(
+                "- **Consent:** at \(timeFormatter.string(from: consentConfirmedAt)), the person recording confirmed "
+                    + "that everyone taking part had been told the conversation would be recorded and transcribed, "
+                    + "and had agreed")
+        }
         lines.append("")
         lines.append(
             inProgress

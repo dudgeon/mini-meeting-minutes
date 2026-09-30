@@ -84,8 +84,7 @@ enum Setup {
         print("  " + place)
         guard offerToOpen, Terminal.isInteractive else { return }
         if ask("\nPress Return to open them, or close this window.") != nil {
-            // TextEdit is on every Mac; the minutes are plain text with light markdown.
-            run("/usr/bin/open", ["-e", url.path])
+            openMinutes(url.path)
         }
     }
 
@@ -98,6 +97,15 @@ enum Setup {
 
     static func open(_ target: String) {
         run("/usr/bin/open", [target])
+    }
+
+    /// Opens minutes in TextEdit, which is on every Mac; they're plain text with light markdown.
+    static func openMinutes(_ path: String) {
+        run("/usr/bin/open", ["-e", path])
+    }
+
+    static func showInFinder(_ path: String) {
+        run("/usr/bin/open", ["-R", path])
     }
 
     private static func run(_ tool: String, _ arguments: [String]) {

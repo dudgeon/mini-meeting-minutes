@@ -16,6 +16,8 @@ To check the screen at another size without touching the GIF, save stills instea
 
 import argparse
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -134,9 +136,10 @@ class Emulator:
             position += 1
 
 
-# Keys pressed during the demo, by seconds after the screen appears: Space to start recording, a
-# note ("\r" is Return), then synthwave mode for a while, and back to the sidebar.
-KEYS = [(2, " "), (10, "\rAsk finance for the infrastructure breakdown\r"), (22, "k"), (36, "k")]
+# Keys pressed during the demo, by seconds after the screen appears: Space, then Y to confirm that
+# everyone has agreed to the recording, a note ("\r" is Return), then synthwave mode for a while,
+# and back to the sidebar.
+KEYS = [(2, " "), (4, "y"), (12, "\rAsk finance for the infrastructure breakdown\r"), (24, "k"), (38, "k")]
 NAMES = ["Samantha", "Daniel", "Karen"]
 
 
@@ -167,6 +170,10 @@ def type_keys(process, typescript):
             process.stdin.flush()
             time.sleep(0.12)
         time.sleep(0.6)
+    wait_for(typescript, "new recording")  # the saved screen
+    time.sleep(3)
+    process.stdin.write(b"q")
+    process.stdin.flush()
 
 
 def main():
@@ -180,6 +187,12 @@ def main():
     arguments = parser.parse_args()
     COLUMNS, ROWS = (int(n) for n in arguments.size.lower().split("x"))
 
+    # The demo's audio (synthetic voices) lives in a temporary folder that's deleted afterwards, even
+    # if the run is stopped; folders left by a run that was killed outright are removed here.
+    for leftover in Path(tempfile.gettempdir()).glob("mmm-demo-*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, lambda *_: sys.exit(1))
     subprocess.run([str(ROOT / "mmm"), "--version"], check=True, capture_output=True)  # build first
     with tempfile.TemporaryDirectory(prefix="mmm-demo-") as scratch:
         scratch = Path(scratch)

@@ -26,12 +26,31 @@ struct MinutesOptions: ParsableArguments {
 
     @Option(
         help: ArgumentHelp(
-            "What to redact: all, none, or a comma-separated list of name, email, phone, address, id, card, account, ip.",
+            "What to blank out: all, none, or a comma-separated list of name, email, phone, address, id, card, "
+                + "account, ip. By default, ID, card and account numbers.",
             valueName: "categories"))
-    var redact = "all"
+    var redact = "id,card,account"
 
     @Flag(help: "Skip naming speakers when the meeting ends.")
     var noNames = false
+
+    @Option(
+        help: ArgumentHelp(
+            "With names redacted: words never to take for names, comma-separated (your company, products, "
+                + "tools). They add to any listed in Documents › Minutes › Words to keep.txt, one per line.",
+            valueName: "words"))
+    var keep: String?
+
+    static let keepFile = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Documents/Minutes/Words to keep.txt")
+
+    /// Words never taken for names: from --keep and the words-to-keep file, if there is one.
+    func wordsToKeep() -> [String] {
+        let listed = ((try? String(contentsOf: Self.keepFile, encoding: .utf8)) ?? "").split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        let given = (keep ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        return (listed + given).filter { !$0.isEmpty }
+    }
 
     func redactionCategories() throws -> Set<PIICategory> {
         switch redact.lowercased() {
@@ -49,6 +68,19 @@ struct MinutesOptions: ParsableArguments {
             }
             return categories
         }
+    }
+
+    /// `url`, or else the first of "… 2.md", "… 3.md" and so on that doesn't exist yet, so new
+    /// minutes never overwrite others (two meetings started in the same minute, say).
+    static func unused(_ url: URL) -> URL {
+        let base = url.deletingPathExtension().lastPathComponent
+        var candidate = url
+        var number = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = url.deletingLastPathComponent().appendingPathComponent("\(base) \(number).\(url.pathExtension)")
+            number += 1
+        }
+        return candidate
     }
 
     /// Where to write the minutes for a meeting that started at `date`.

@@ -48,6 +48,30 @@ import Testing
         #expect(redactor.redact("Priya, can you take this one?") == "[NAME], can you take this one?")
     }
 
+    @Test func keepsCompaniesAndProducts() {
+        let untouched = [
+            "We use Stripe and Plaid for payments.",
+            "We should move our payments over to Stripe next quarter.",
+            "Apple and Dell both quoted for the laptops.",
+            "The Tesla fleet contract renews in March.",
+            "We rewrote the importer in Ruby last year.",
+            "Our Chase account covers payroll.",
+        ]
+        for text in untouched {
+            #expect(redactor.redact(text) == text)
+        }
+        // People are still found around them.
+        #expect(redactor.redact("Priya from Stripe will join the call.") == "[NAME] from Stripe will join the call.")
+        #expect(redactor.redact("I met Dr. Okonkwo at Stripe.") == "I met Dr. [NAME] at Stripe.")
+    }
+
+    @Test func wordsToKeepAreNeverNames() {
+        let keeping = PIIRedactor(keep: ["Priya", "wells fargo"])
+        #expect(keeping.redact("Priya from Wells Fargo will join.") == "Priya from Wells Fargo will join.")
+        #expect(keeping.redact("Marcus will join.") == "[NAME] will join.")
+        #expect(keeping.redact("Email priya@example.com") == "Email [EMAIL]")  // only names are kept
+    }
+
     @Test func keepsEverydayWordsPlacesAndNumbers() {
         let untouched = [
             "Will you send the deck by May?",

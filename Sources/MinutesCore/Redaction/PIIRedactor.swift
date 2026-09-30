@@ -55,19 +55,30 @@ public enum PIICategory: String, CaseIterable, Sendable, Codable {
 
 /// Removes personal information from transcript text, entirely on device.
 ///
-/// Person names come from Apple's on-device named-entity recognizer (NaturalLanguage) plus a
-/// lexicon of about 20,000 first names, which catches names the recognizer misses in context or
-/// in lowercase. Street addresses and phone numbers come from Foundation's data detectors, and
-/// the rest from patterns that also cover spoken and misrecognized forms ("john dot smith at
-/// gmail dot com", "jane.doatexample.com", "415. 555, 0132"). Organization and place names are
-/// kept: they rarely identify a person on their own and are usually what minutes are about.
+/// Person names come from a lexicon of about 20,000 first names, together with Apple's on-device
+/// named-entity recognizer (NaturalLanguage) for full names and context. The recognizer alone
+/// isn't trusted: it takes plenty of company and product names for people ("We use Stripe and
+/// Plaid"), so a name it finds must include a known first name or follow a title like "Dr.".
+/// Brand names that are also first names are left to the recognizer's reading of the context.
+/// Street addresses and phone numbers come from Foundation's data detectors, and the rest from
+/// patterns that also cover spoken and misrecognized forms ("john dot smith at gmail dot com",
+/// "jane.doatexample.com", "415. 555, 0132"). Organization and place names are kept: they rarely
+/// identify a person on their own and are usually what minutes are about.
 ///
-/// Misspelled names ("Praya" for Priya) and surnames on their own can still slip through.
+/// Misspelled names ("Praya" for Priya), unusual first names and surnames on their own can slip
+/// through. Words to keep (a company's own products, say) are never taken for names.
 public struct PIIRedactor: Sendable {
     public let categories: Set<PIICategory>
+    private let keep: [NSRegularExpression]
 
-    public init(categories: Set<PIICategory> = Set(PIICategory.allCases)) {
+    public init(categories: Set<PIICategory> = Set(PIICategory.allCases), keep: [String] = []) {
         self.categories = categories
+        self.keep = keep.compactMap { phrase in
+            let trimmed = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let pattern = #"(?<![\p{L}\p{N}])"# + NSRegularExpression.escapedPattern(for: trimmed) + #"(?![\p{L}\p{N}])"#
+            return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
     }
 
     public func redact(_ text: String) -> String {
@@ -113,6 +124,7 @@ public struct PIIRedactor: Sendable {
         }
 
         if categories.contains(.name) {
+            var names: [Span] = []
             var placesAndOrganizations: [NSRange] = []
             let tagger = NLTagger(tagSchemes: [.nameType])
             tagger.string = text
@@ -120,16 +132,36 @@ public struct PIIRedactor: Sendable {
             tagger.enumerateTags(
                 in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType, options: options
             ) { tag, range in
+                let span = NSRange(range, in: text)
                 switch tag {
-                case .personalName: spans.append(Span(range: NSRange(range, in: text), category: .name))
-                case .placeName, .organizationName: placesAndOrganizations.append(NSRange(range, in: text))
+                case .personalName where Self.looksLikePerson(nsText, span):
+                    names.append(Span(range: span, category: .name))
+                case .placeName, .organizationName: placesAndOrganizations.append(span)
                 default: break
                 }
                 return true
             }
-            spans += lexiconNames(in: nsText, excluding: placesAndOrganizations)
+            names += lexiconNames(in: nsText, excluding: placesAndOrganizations)
+            let kept = keep.flatMap { $0.matches(in: text, range: whole).map(\.range) }
+            spans += names.filter { name in !kept.contains { NSIntersectionRange($0, name.range).length > 0 } }
         }
         return spans
+    }
+
+    /// Whether a name the recognizer found is a person's: it includes a first name (not one that's
+    /// mostly a brand), or follows a title.
+    static func looksLikePerson(_ text: NSString, _ range: NSRange) -> Bool {
+        let words = text.substring(with: range).split { !$0.isLetter && $0 != "'" && $0 != "’" && $0 != "-" }
+        if words.contains(where: { word in
+            let lower = word.lowercased()
+            return FirstNames.all.contains(Substring(lower)) && !Brands.all.contains(lower)
+        }) {
+            return true
+        }
+        let before = text.substring(to: range.location).trimmingCharacters(in: .whitespaces).lowercased()
+        return ["mr", "mrs", "ms", "miss", "mx", "dr", "doctor", "prof", "professor"].contains { title in
+            before.hasSuffix(title) || before.hasSuffix(title + ".")
+        }
     }
 
     /// First names from the lexicon. Mid-sentence capitalized words count; at the start of a
@@ -140,6 +172,8 @@ public struct PIIRedactor: Sendable {
             let word = text.substring(with: match.range)
             let lower = word.lowercased()
             guard FirstNames.all.contains(Substring(lower)) else { continue }
+            // Brand names that are also first names ("Apple", "Chase") are left to the recognizer.
+            guard !Brands.all.contains(lower) && !Brands.ambiguous.contains(lower) else { continue }
             guard !vetoed.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
             if word.count > 1 && word == word.uppercased() { continue }  // an acronym
             let capitalized = word.first?.isUppercase == true
@@ -286,6 +320,21 @@ public struct PIIRedactor: Sendable {
 
 /// Everyday English words (lowercase entries of the system word list), so names that are also
 /// words aren't redacted where capitalization can't tell them apart.
+/// Company, product and technology names that are also in the first-name lexicon.
+enum Brands {
+    /// Mostly brands at work: never a name on their own.
+    static let all: Set<String> = [
+        "apple", "arlo", "bing", "chevy", "cisco", "cypress", "dell", "delta", "deno", "dior", "dyson", "ford",
+        "gemini", "haskell", "hermes", "hilton", "hyatt", "ikea", "kia", "lexus", "meta", "pandora", "pascal", "perl",
+        "porsche", "siri", "sony", "spring", "tesla", "unity",
+    ]
+    /// Common first names too: a name only when the recognizer reads the context as a person.
+    static let ambiguous: Set<String> = [
+        "ada", "alexa", "chanel", "chase", "claude", "harvey", "jasper", "julia", "lincoln", "mercedes", "morgan",
+        "ruby", "tiffany", "wells", "wendy", "zara",
+    ]
+}
+
 enum CommonWords {
     static func contains(_ word: String) -> Bool { words.contains(word) }
 

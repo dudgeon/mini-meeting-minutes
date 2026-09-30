@@ -63,6 +63,7 @@ struct SidebarView {
 
     /// The recording status as a symbol, its color, and a word.
     private var status: (symbol: String, color: RGB, label: String) {
+        if state.saved != nil { return ("✓", Palette.green, "Saved") }
         if !state.started && !state.stopping { return ("○", Palette.dim, "Ready") }
         if state.finished { return ("✓", Palette.green, "Done") }
         if state.stopping { return (String(ScreenModel.spinner(time)), Palette.accent, "Finishing") }
@@ -72,6 +73,13 @@ struct SidebarView {
     }
 
     private var keyList: [(key: String, label: String, action: ScreenAction?)] {
+        if state.saved != nil {
+            return [
+                ("space", "new recording", .newMeeting), ("return", "open minutes", .open), ("r", "show in Finder", .reveal),
+                ("k", "synthwave", .skin), ("q", "quit", .quit),
+            ]
+        }
+        if state.askingConsent { return [("y", "yes, start", .consent), ("n", "not yet", .decline)] }
         if state.draft != nil { return [("return", "add the note", nil), ("esc", "cancel", nil)] }
         if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         if !state.started {
@@ -215,7 +223,10 @@ struct SidebarView {
         let bg = Palette.side
         heading("PRIVACY", y: top)
         var checks = [(true, "no audio saved")]
-        checks.append(state.redaction ? (true, "names and numbers hidden") : (false, "redaction is off"))
+        checks.append(
+            state.redaction.isEmpty
+                ? (false, "redaction is off")
+                : (true, state.redaction.contains(.name) ? "names and numbers hidden" : "sensitive numbers hidden"))
         if state.channels.count == 2 {
             checks.append(state.echoCancellation ? (true, "speaker echo removed") : (false, "echo removal is off"))
         }
@@ -259,6 +270,15 @@ struct SidebarView {
                     ? "type a name · return for the next · esc when you're done"
                     : "type a name · return next · ↑↓ move · esc done · the same name twice combines them",
                 x: x, width: w)
+        } else if let saved = state.saved {
+            panelTop = panelBottom - 3
+            drawSaved(saved, x: x, top: panelTop, width: w)
+            hint("space new recording · return open the minutes · r show in Finder · q quit", x: x, width: w)
+        } else if state.askingConsent {
+            let lines = Self.consentText.wrapped(to: max(20, w - 6))
+            panelTop = max(4, panelBottom - lines.count - 3)
+            drawConsent(lines, x: x, top: panelTop, width: w)
+            hint("y yes, everyone has agreed: start recording · n not yet", x: x, width: w)
         } else if state.help {
             let rows = ScreenModel.shortcuts(switchingTo: "synthwave")
             let visible = min(rows.count + 1, max(1, height - 12))
@@ -363,6 +383,46 @@ struct SidebarView {
             canvas.text(x + w - 2 - stop.count, y, stop, fg: Palette.quiet)
             canvas.region(x, top, w, 3, .note)
         }
+    }
+
+    static let consentText =
+        "Everyone taking part, in the room and on the call, must know this conversation is being recorded "
+        + "and transcribed, and agree to it. In some places, including California, recording without everyone's "
+        + "consent is against the law, and that covers a transcript too, even though no audio is kept. Tell "
+        + "anyone who joins later, too."
+
+    /// The question before recording, in place of the prompt box.
+    private mutating func drawConsent(_ lines: [String], x: Int, top: Int, width w: Int) {
+        let height = height - 1 - top
+        canvas.box(
+            x, top, w, height, border: Palette.accent, fill: Palette.background, title: "Before you record",
+            titleColor: Palette.text)
+        for (index, line) in lines.prefix(height - 4).enumerated() {
+            canvas.text(x + 3, top + 1 + index, line, fg: Palette.text)
+        }
+        let y = top + height - 2
+        let question = "Has everyone been told, and agreed?"
+        canvas.text(x + 3, y, question, fg: Palette.text, bold: true, limit: w - 6)
+        var column = x + 3 + question.count + 3
+        for (key, label, action) in [("y", "yes, start recording", ScreenAction.consent), ("n", "not yet", .decline)] {
+            guard column + key.count + label.count + 1 < x + w - 1 else { break }
+            canvas.text(column, y, key, fg: Palette.accent, bold: true)
+            canvas.text(column + key.count + 1, y, label, fg: Palette.dim)
+            canvas.region(column, y, key.count + 1 + label.count, 1, action)
+            column += key.count + label.count + 4
+        }
+    }
+
+    /// Where the minutes went, in place of the prompt box, once they're saved.
+    private mutating func drawSaved(_ saved: LiveState.Saved, x: Int, top: Int, width w: Int) {
+        canvas.box(x, top, w, 3, border: Palette.green, fill: Palette.background, title: "Saved", titleColor: Palette.text)
+        let file = URL(fileURLWithPath: saved.path)
+        let place = file.deletingLastPathComponent().lastPathComponent + " › " + file.lastPathComponent
+        let counts = "\(saved.turns) turns · \(saved.speakers) speakers"
+        canvas.put(x + 2, top + 1, "✓", fg: Palette.green)
+        canvas.text(x + 4, top + 1, place.clipped(w - 8 - counts.count), fg: Palette.text)
+        canvas.text(x + w - 2 - counts.count, top + 1, counts, fg: Palette.dim)
+        canvas.region(x, top, w, 3, .open)
     }
 
     /// The prompt box while a note is typed: it grows to four lines, then shows the end.

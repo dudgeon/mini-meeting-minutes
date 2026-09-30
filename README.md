@@ -2,13 +2,12 @@
 
 Mini Meeting Minutes writes down what was said in your meetings, and who said it, entirely on
 your Mac. It listens to the people in the room and to the people on your call, then saves the
-conversation as text, with names, email addresses, phone numbers and other personal details
-blanked out.
+conversation as text, with ID, card and account numbers blanked out.
 
 - **Private.** Nothing leaves your Mac and the audio is never saved. Only the written minutes are.
 - **Word for word.** No AI summaries: the minutes are exactly what was said.
 
-![Mini Meeting Minutes recording a meeting: what people say appears as they say it, then each line is attributed to a speaker, with names, email addresses and phone numbers blanked out](docs/demo.gif)
+![Mini Meeting Minutes recording a meeting: after confirming everyone has agreed to be recorded, what people say appears as they say it, then each line is attributed to a speaker; a note is added, and the saved minutes stay on screen](docs/demo.gif)
 
 *A short meeting (made with macOS voices) running through Mini Meeting Minutes about four times
 faster than real time. A note gets added, synthwave mode makes an appearance, and the speakers get
@@ -17,13 +16,13 @@ The minutes it saves look like this:
 
 ```markdown
 **Room 1** · 00:00:17
-That is concerning. Can you send me the full breakdown? My email is [EMAIL].
+That is concerning. Can you send me the full breakdown? My email is jane.doe@example.com.
 
 > **Note** · 00:00:21
 > Ask finance for the breakdown before Friday
 
 **Remote 2** · 00:00:24
-I can help with that. You can also call me at [PHONE] if anything is unclear.
+I can help with that. You can also call me at 415-555-0132 if anything is unclear.
 ```
 
 ## Install
@@ -47,12 +46,14 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
 1. Double-click **Mini Meeting Minutes** on your Desktop.
 2. The first time, your Mac asks whether **Terminal** may use the microphone and record system
    audio. Click **Allow** both times.
-3. Press **Space** to start recording. Nothing is recorded until then, but the meters already
-   move, so you can check that your microphone is heard.
+3. Press **Space** to start recording, then **Y** to confirm that everyone taking part knows the
+   conversation is being recorded and transcribed, and has agreed. Nothing is recorded until then,
+   but the meters already move, so you can check that your microphone is heard.
 4. To jot something down, press **Return**, type your note, and press **Return** again. It goes
    into the transcript at the moment you started typing.
 5. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
-   skip them), then press **Return** once more to open your minutes.
+   skip them). Then press **Return** to open your minutes, **Space** to record another meeting,
+   or **Q** to quit.
 
 Your minutes are saved in the **Minutes** folder inside **Documents**.
 
@@ -91,9 +92,9 @@ mmm doctor                           # check the models, permissions and microph
 ```
 
 While recording, a sidebar shows the clock, each speaker's share of the talking, what the
-microphone and system audio are hearing, and the privacy settings, beside the transcript. New
-speech appears within a few seconds. Speaker labels usually follow within 30 seconds, once that
-stretch of audio has been analyzed. Press **K** for synthwave mode: a pixel-art sunset whose city
+microphone and system audio are hearing, and the privacy settings, beside the transcript. Words
+appear as people speak. Who said them follows a couple of seconds after a pause, and within about
+30 seconds even in non-stop conversation. Press **K** for synthwave mode: a pixel-art sunset whose city
 skyline dances to the microphone (left of the sun) and the call (right).
 
 Notes you type land in the transcript at the moment you started typing, right after whatever was
@@ -103,7 +104,7 @@ applies only to what people said.
 | Key | Does |
 |---|---|
 | **Return** | Write a note; **Return** again adds it, **Esc** cancels |
-| **Space** | Start recording; after that, pause or resume (paused audio is dropped, not buffered) |
+| **Space** | Start recording (after you confirm everyone has agreed); then pause or resume (paused audio is dropped, not buffered) |
 | **Q** or Ctrl-C | Stop and save |
 | **N** | Name the speakers, any time |
 | **V** | Switch the visualizer: spectrum, waveform, off |
@@ -127,7 +128,8 @@ you connect one.
 
 | Option | Effect |
 |---|---|
-| `--redact <list>` | What to redact: `all` (default), `none`, or a comma-separated list of `name`, `email`, `phone`, `address`, `id`, `card`, `account`, `ip`. |
+| `--redact <list>` | What to blank out: `all`, `none`, or a comma-separated list of `name`, `email`, `phone`, `address`, `id`, `card`, `account`, `ip`. The default is `id,card,account`. |
+| `--keep <words>` | With `name` redaction on: words never to take for names, such as your company's products. They add to any listed in `Documents/Minutes/Words to keep.txt`. |
 | `--no-echo-cancel` | Skip echo cancellation. It's only needed when the call plays through speakers; with headphones you can turn it off. |
 | `--mic-device <uid>` | Use a specific microphone. `mmm doctor` lists them. |
 | `--no-names` | Don't ask for speaker names at the end. |
@@ -200,12 +202,12 @@ system audio ──────────────────────�
 
 | Data | Where | How long |
 |---|---|---|
-| Audio | Memory only | Seconds to about a minute per channel (the current diarization window), then released |
+| Audio | Memory only | Up to about 30 seconds per channel (the current diarization window), then released |
 | Unredacted text | Memory only | Until its window is attributed and redacted |
-| Voice embeddings (numeric voice fingerprints) | Memory only | Until `mmm` exits, to keep labels consistent |
+| Voice embeddings (numeric voice fingerprints) | Memory only | Until the meeting ends |
 | Minutes | The markdown file | Yours to keep; redacted before writing |
 
-No audio is ever written to disk, nor is unredacted text unless you pass `--redact none`. The app
+No audio is ever written to disk. The app
 makes no network requests: FluidAudio's model downloader is switched off. Installing and building
 need the network to fetch the repository and Swift packages.
 
@@ -215,8 +217,10 @@ need the network to fetch the repository and Swift packages.
   who anyone is until you name them. People sharing one microphone are separated by voice, which
   is harder than separating people on different channels.
 - **Overlapping speech** is attributed to whoever dominates it.
-- **Redaction is best effort.** Misrecognized names ("Praya" for Priya) and surnames on their own
-  can slip through. Read the minutes before sharing them.
+- **Redaction is best effort.** By default only ID, card and account numbers are blanked out;
+  names, emails and phone numbers are kept unless you turn them on with `--redact`. Misrecognized
+  names ("Praya" for Priya) and surnames on their own can slip through. Read the minutes before
+  sharing them.
 - **Echo cancellation is beta** upstream. If remote voices still show up as room speakers, wear
   headphones or use `--no-mic`.
 - Name redaction is tuned for English.

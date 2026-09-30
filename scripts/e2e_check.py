@@ -86,7 +86,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mmm-e2e-") as scratch:
         room, remote = synthesize_call(scratch)
         result = subprocess.run(
-            [str(ROOT / "mmm"), "transcribe", "--room", str(room), "--remote", str(remote), "--stdout"],
+            [str(ROOT / "mmm"), "transcribe", "--room", str(room), "--remote", str(remote), "--stdout",
+             "--redact", "all"],  # everything the redactor can do, not just the default
             capture_output=True, text=True, check=True)
     minutes = result.stdout
 

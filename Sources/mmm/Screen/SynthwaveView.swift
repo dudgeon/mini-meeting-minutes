@@ -57,6 +57,7 @@ struct SynthwaveView {
         view.drawTranscript(top: art + (height >= 24 ? 2 : 1), bottom: footer - 2 - warnings.count)
         view.drawFooter(y: footer)
         if state.help { view.drawHelp() }
+        if state.askingConsent { view.drawConsent() }
         if let naming = state.naming { view.drawNaming(naming) }
         return (view.canvas, view.maxScroll)
     }
@@ -101,7 +102,9 @@ struct SynthwaveView {
         let brand = "MINI MEETING MINUTES"
         let limit = width >= 90 ? width - brand.count - 4 : width - 2
         let (label, color): (String, RGB) =
-            !state.started && !state.stopping
+            state.saved != nil
+            ? ("✓ SAVED", Palette.cyan)
+            : !state.started && !state.stopping
             ? ("○ READY", Palette.yellow)
             : state.finished
             ? ("■ DONE", Palette.cyan)
@@ -133,7 +136,7 @@ struct SynthwaveView {
             canvas.text(x, y, memory, fg: Palette.yellow, bg: bg)
             x += memory.count + 3
         }
-        var privacy = state.redaction ? "PII ✓" : "PII ✗"
+        var privacy = state.redaction.isEmpty ? "PII ✗" : "PII ✓"
         if state.channels.count == 2 { privacy += state.echoCancellation ? "  ECHO ✓" : "  ECHO ✗" }
         if x + privacy.count <= limit { canvas.text(x, y, privacy, fg: Palette.cyan, bg: bg) }
         if width >= 90 { canvas.text(width - 2 - brand.count, y, brand, fg: Palette.text, bg: bg, bold: true) }
@@ -204,7 +207,9 @@ struct SynthwaveView {
             canvas.text(3, top + 1, title, fg: Palette.dim, bg: bg, bold: true)
             let room = width - 8 - title.count
             let path =
-                state.started
+                state.saved != nil
+                ? "✓ SAVED → " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 10, 0))
+                : state.started
                 ? "→ " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 2, 0))
                 : "A NEW FILE, ONCE YOU START"
             if room > 12 { canvas.text(width - 3 - path.count, top + 1, path, fg: Palette.dim, bg: bg) }
@@ -262,8 +267,15 @@ struct SynthwaveView {
             drawDraft(draft, y: y)
             return
         }
+        if state.askingConsent {
+            canvas.text(2, y, "Y YES, EVERYONE HAS AGREED · N NOT YET", fg: Palette.dim, limit: width - 4)
+            return
+        }
         var keys: [(String, String, ScreenAction)] =
-            state.finished
+            state.saved != nil
+            ? [("SPACE", "NEW", .newMeeting), ("RETURN", "OPEN", .open), ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin),
+               ("Q", "QUIT", .quit)]
+            : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
             : !state.started
             ? [("SPACE", "START", .pause), ("Q", "QUIT", .stop), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
@@ -353,6 +365,26 @@ struct SynthwaveView {
         canvas.text(
             x + 3, y + visible + 5, "Giving two speakers the same name combines them.", fg: Palette.dim, bg: bg,
             limit: w - 5)
+    }
+
+    /// The question before recording.
+    private mutating func drawConsent() {
+        let bg = Palette.strip
+        let w = min(width - 2, 76)
+        let lines = SidebarView.consentText.wrapped(to: w - 6)
+        let (x, y) = dialog("BEFORE YOU RECORD", width: w, height: lines.count + 7)
+        for (index, line) in lines.enumerated() {
+            canvas.text(x + 3, y + 2 + index, line, fg: Palette.text, bg: bg)
+        }
+        let row = y + lines.count + 3
+        canvas.text(x + 3, row, "HAS EVERYONE BEEN TOLD, AND AGREED?", fg: Palette.yellow, bg: bg, bold: true)
+        var column = x + 3
+        for (key, label, action) in [("Y", "YES, START RECORDING", ScreenAction.consent), ("N", "NOT YET", .decline)] {
+            canvas.text(column, row + 2, key, fg: Palette.night, bg: Palette.yellow, bold: true)
+            canvas.text(column + key.count + 1, row + 2, label, fg: Palette.pink, bg: bg, bold: true)
+            canvas.region(column, row + 2, key.count + 1 + label.count, 1, action)
+            column += key.count + label.count + 4
+        }
     }
 
     private mutating func drawHelp() {

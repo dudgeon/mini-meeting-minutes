@@ -4,11 +4,15 @@ import Foundation
 /// Tunables for turning one channel's audio into attributed turns.
 public struct PipelineSettings: Sendable {
     /// A diarization window closes at the first pause after this much audio...
-    public var targetWindowSeconds: Double = 30
+    public var targetWindowSeconds: Double = 15
     /// ...or here, even mid-sentence.
-    public var maxWindowSeconds: Double = 60
+    public var maxWindowSeconds: Double = 30
     /// A window also closes after this much silence, so labels don't lag behind a pause.
-    public var idleFlushSeconds: Double = 3
+    public var idleFlushSeconds: Double = 2
+    /// While someone is still talking, what they've said so far is recognized this often, so
+    /// words appear before they pause (then the whole utterance is recognized again). Backs off
+    /// on a Mac too slow to keep up; 0 turns it off.
+    public var interimSeconds: Double = 1.5
     /// Longest stretch sent to the recognizer at once (its encoder sees 15 s).
     public var maxUtteranceSeconds: Double = 14
     /// Diarized stretches longer than this are split before embedding (the model sees 10 s).
@@ -27,7 +31,8 @@ public struct PipelineSettings: Sendable {
 
 /// What a channel reports back after ingesting audio.
 public enum ChannelUpdate: Sendable {
-    /// Recognized text not yet attributed to a speaker (already redacted).
+    /// Recognized text not yet attributed to a speaker (already redacted). Its end can still
+    /// change while the speaker is mid-sentence.
     case pending(Channel, String)
     /// Newly attributed turns.
     case turns([Turn])
@@ -68,6 +73,10 @@ actor ChannelPipeline {
     private var speechStart: Int?
     private var lastSpeechEnd: Int?
     private var pendingWords: [Word] = []
+    /// A first reading of the utterance still in progress, replaced when it ends.
+    private var interimWords: [Word] = []
+    private var interimAt = 0  // stream sample where the last interim reading ended
+    private var interimInterval: Double
 
     init(
         channel: Channel, settings: PipelineSettings, asr: AsrManager, decoderLayers: Int, vad: VadManager,
@@ -81,6 +90,7 @@ actor ChannelPipeline {
         self.diarizer = diarizer
         self.embedder = embedder
         self.redactor = redactor
+        self.interimInterval = settings.interimSeconds
         self.linker = SpeakerLinker(channel: channel, thresholds: settings.speakerThresholds)
         self.segmentation = VadSegmentationConfig(
             minSpeechDuration: 0.15, minSilenceDuration: settings.minSilenceSeconds,
@@ -96,6 +106,12 @@ actor ChannelPipeline {
     private func log(_ message: @autoclosure () -> String) {
         guard Self.debug else { return }
         FileHandle.standardError.write(Data("[\(channel.rawValue)] \(message())\n".utf8))
+    }
+
+    /// Milliseconds since `start`, for the timings in the diagnostics.
+    private static func milliseconds(since start: ContinuousClock.Instant) -> Double {
+        let elapsed = start.duration(to: .now)
+        return Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
     }
 
     private func time(ofSample sample: Int) -> TimeInterval {
@@ -192,8 +208,43 @@ actor ChannelPipeline {
             updates += try await transcribe(start..<cut)
             speechStart = cut
         }
+        if let start = speechStart {
+            updates += try await readInterim(from: start)
+        }
         updates += try await closeWindowIfDue()
         return updates
+    }
+
+    /// Recognizes the utterance so far, if it's been long enough since the last reading.
+    private func readInterim(from start: Int) async throws -> [ChannelUpdate] {
+        let end = min(vadPosition, received)
+        let due = Int(interimInterval * AudioChunk.samplesPerSecond)
+        guard settings.interimSeconds > 0, end - start >= Self.rate, end - max(start, interimAt) >= due else {
+            return []
+        }
+        let lower = max(start, windowStart)
+        guard lower < end else { return [] }
+        let started = ContinuousClock.now
+        var state = TdtDecoderState.make(decoderLayers: decoderLayers)
+        let result = try await asr.transcribe(
+            Array(window[(lower - windowStart)..<(end - windowStart)]), decoderState: &state)
+        interimWords = Self.words(from: result.tokenTimings ?? [], offset: time(ofSample: lower))
+        interimAt = end
+        // Keep readings to a small share of the time they cover, on slower Macs too.
+        let seconds = Self.milliseconds(since: started) / 1000
+        interimInterval = max(settings.interimSeconds, seconds * 4)
+        log(
+            String(
+                format: "  interim reading of %.1f s in %.0f ms", Double(end - lower) / AudioChunk.samplesPerSecond,
+                seconds * 1000))
+        return [.pending(channel, pendingText)]
+    }
+
+    /// Loads the recognizer and the name finder, which are slow the first time they run.
+    func warmUp() async {
+        var state = TdtDecoderState.make(decoderLayers: decoderLayers)
+        _ = try? await asr.transcribe([Float](repeating: 0, count: Self.rate), decoderState: &state)
+        _ = redactor?.redact("Warming up: Priya from Stripe said hello.")
     }
 
     // MARK: - Recognition
@@ -202,24 +253,38 @@ actor ChannelPipeline {
         let lower = max(range.lowerBound, windowStart)
         let upper = min(range.upperBound, windowStart + window.count)
         // Skip clicks and breaths the VAD let through.
-        guard upper - lower >= Self.rate / 5 else { return [] }
+        guard upper - lower >= Self.rate / 5 else {
+            guard !interimWords.isEmpty else { return [] }
+            interimWords = []
+            return [.pending(channel, pendingText)]
+        }
 
         var samples = Array(window[(lower - windowStart)..<(upper - windowStart)])
         let minimum = Self.rate * 3 / 10  // the recognizer rejects anything under 0.3 s
         if samples.count < minimum { samples += [Float](repeating: 0, count: minimum - samples.count) }
 
         var state = TdtDecoderState.make(decoderLayers: decoderLayers)
+        let started = ContinuousClock.now
         let result = try await asr.transcribe(samples, decoderState: &state)
+        let asrMilliseconds = Self.milliseconds(since: started)
         let words = Self.words(from: result.tokenTimings ?? [], offset: time(ofSample: lower))
-        log(String(format: "utterance %.2f–%.2f: %@", time(ofSample: lower), time(ofSample: upper), words.joinedText))
-        guard !words.isEmpty else { return [] }
+        log(
+            String(
+                format: "utterance %.2f–%.2f (recognized in %.0f ms): %@", time(ofSample: lower), time(ofSample: upper),
+                asrMilliseconds, words.joinedText))
+        interimWords = []
+        interimAt = upper
+        guard !words.isEmpty else { return [.pending(channel, pendingText)] }
         pendingWords += words
         return [.pending(channel, pendingText)]
     }
 
     private var pendingText: String {
-        let text = pendingWords.joinedText
-        return redactor?.redact(text) ?? text
+        let text = (pendingWords + interimWords).joinedText
+        guard let redactor else { return text }
+        let started = ContinuousClock.now
+        defer { log(String(format: "  redacted %d characters in %.1f ms", text.count, Self.milliseconds(since: started))) }
+        return redactor.redact(text)
     }
 
     /// Groups sentencepiece tokens into words, carrying timing and mean confidence.
@@ -332,7 +397,10 @@ actor ChannelPipeline {
 
         // Where each voice speaks, per the diarizer. Long stretches are split so every piece fits
         // the embedding model and a missed speaker change stays local.
-        var spans = ((try? await Self.diarize(audio, models: diarizer))?.segments ?? []).map {
+        let windowStarted = ContinuousClock.now
+        let diarized = try? await Self.diarize(audio, models: diarizer)
+        let diarizeMilliseconds = Self.milliseconds(since: windowStarted)
+        var spans = (diarized?.segments ?? []).map {
             (local: $0.speakerId, start: windowTime + Double($0.startTimeSeconds),
              end: windowTime + Double($0.endTimeSeconds))
         }.sorted { $0.start < $1.start }
@@ -353,6 +421,7 @@ actor ChannelPipeline {
         }
 
         // Each segment's own voice embedding decides who it is, across the whole meeting.
+        let embeddingsStarted = ContinuousClock.now
         let linked = segments.map { segment in
             SpeakerLinker.Segment(
                 index: segment.index, local: segment.speaker, start: segment.start,
@@ -366,8 +435,12 @@ actor ChannelPipeline {
                 log("  sims seg \(segment.index): clusters [\(before.joined(separator: " "))] window [\(within.joined(separator: " "))]")
             }
         }
+        let embeddingMilliseconds = Self.milliseconds(since: embeddingsStarted)
         let labels = linker.link(window: windowIndex, segments: linked)
-        log(String(format: "window %d %.2f–%.2f", windowIndex, windowTime, cutTime))
+        log(
+            String(
+                format: "window %d %.2f–%.2f: diarized in %.0f ms, %d embeddings in %.0f ms", windowIndex, windowTime,
+                cutTime, diarizeMilliseconds, linked.count { $0.embedding != nil }, embeddingMilliseconds))
         for segment in linked {
             log(
                 String(
@@ -398,6 +471,7 @@ actor ChannelPipeline {
             run.append(word)
         }
         finishRun()
+        log(String(format: "  window %d done in %.0f ms", windowIndex, Self.milliseconds(since: windowStarted)))
         return [.turns(turns), .pending(channel, pendingText)]
     }
 

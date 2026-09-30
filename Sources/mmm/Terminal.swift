@@ -7,7 +7,9 @@ final class Terminal: Sendable {
     static let isInteractive = isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1
 
     private let original = Mutex<termios?>(nil)
-    private let reading = Atomic<Bool>(false)
+    /// Bumped whenever a key reader starts or stops; each reader runs while it's current.
+    private let readerGeneration = Atomic<Int>(0)
+    private let fullScreen = Atomic<Bool>(false)
 
     var size: (columns: Int, rows: Int) {
         var size = winsize()
@@ -17,6 +19,7 @@ final class Terminal: Sendable {
 
     /// Switches to the alternate screen with unbuffered, unechoed input. Ctrl-C still raises SIGINT.
     func enterFullScreen() {
+        guard !fullScreen.exchange(true, ordering: .relaxed) else { return }
         var attributes = termios()
         tcgetattr(STDIN_FILENO, &attributes)
         original.withLock { $0 = attributes }
@@ -28,6 +31,7 @@ final class Terminal: Sendable {
     }
 
     func leaveFullScreen() {
+        guard fullScreen.exchange(false, ordering: .relaxed) else { return }
         stopReadingKeys()
         write("\u{1B}[?2004l\u{1B}[?1000l\u{1B}[?1006l\u{1B}[?7h\u{1B}[0m\u{1B}[?25h\u{1B}[?1049l")
         if var attributes = original.withLock({ $0 }) {
@@ -38,16 +42,18 @@ final class Terminal: Sendable {
     /// Delivers keys and mouse events until `stopReadingKeys()`. Polls so the reader can stop
     /// without consuming input meant for a later prompt.
     func keys() -> AsyncStream<Key> {
-        reading.store(true, ordering: .relaxed)
+        let generation = readerGeneration.wrappingAdd(1, ordering: .relaxed).newValue
         return AsyncStream { continuation in
             let thread = Thread { [self] in
                 var parser = KeyParser()
                 var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
-                while reading.load(ordering: .relaxed) {
+                while readerGeneration.load(ordering: .relaxed) == generation {
                     guard poll(&descriptor, 1, 50) > 0 else {
                         for key in parser.idle() { continuation.yield(key) }
                         continue
                     }
+                    // A newer reader may have started while this one waited: leave the input to it.
+                    guard readerGeneration.load(ordering: .relaxed) == generation else { break }
                     var byte: UInt8 = 0
                     let count = read(STDIN_FILENO, &byte, 1)
                     if count == 1 {
@@ -63,7 +69,7 @@ final class Terminal: Sendable {
     }
 
     func stopReadingKeys() {
-        reading.store(false, ordering: .relaxed)
+        readerGeneration.wrappingAdd(1, ordering: .relaxed)
     }
 
     /// Writes to the terminal, quietly doing nothing once it has gone (its window was closed).

@@ -49,6 +49,10 @@ struct HitRegion: Sendable {
 /// What a click on the screen does.
 enum ScreenAction: Sendable, Equatable {
     case resume, pause, stop, name, note, visualizer, skin, help, follow
+    /// Before recording: everyone has agreed to it, or not yet.
+    case consent, decline
+    /// After saving: another recording, the minutes, or done.
+    case newMeeting, open, reveal, quit
 }
 
 /// An off-screen grid of cells that views draw into; `Screen` puts it on the terminal.

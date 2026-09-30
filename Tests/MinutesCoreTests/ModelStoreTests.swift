@@ -30,6 +30,7 @@ import Testing
 
     @Test func reassemblesSplitFiles() throws {
         let (store, payload) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: store.root) }
         try store.prepare()
         #expect(try Data(contentsOf: store.url("model/weights/weight.bin")) == payload)
         #expect(store.verify().isEmpty)
@@ -38,6 +39,7 @@ import Testing
 
     @Test func rejectsCorruptParts() throws {
         let (store, _) = try makeStore(corruptPart: true)
+        defer { try? FileManager.default.removeItem(at: store.root) }
         #expect(throws: ModelStoreError.self) { try store.prepare() }
         #expect(!FileManager.default.fileExists(atPath: store.url("model/weights/weight.bin").path))
         #expect(!store.verify().isEmpty)

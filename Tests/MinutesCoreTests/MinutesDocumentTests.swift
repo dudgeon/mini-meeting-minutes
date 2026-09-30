@@ -73,6 +73,14 @@ import Testing
         #expect(doc.markdown().hasSuffix("---\n\n> **Note** · 00:01:05  \n> Nobody has joined yet\n"))
     }
 
+    @Test func consentIsRecorded() {
+        var doc = document([turn(.room, 1, 0, "Hello.")])
+        #expect(!doc.markdown().contains("Consent"))
+        doc.consentConfirmedAt = Date(timeIntervalSince1970: 0)
+        #expect(doc.markdown().contains("- **Consent:** at "))
+        #expect(doc.markdown().contains("had been told the conversation would be recorded and transcribed, and had agreed"))
+    }
+
     @Test func timestamps() {
         #expect(MinutesDocument.timestamp(0) == "00:00:00")
         #expect(MinutesDocument.timestamp(59.9) == "00:00:59")

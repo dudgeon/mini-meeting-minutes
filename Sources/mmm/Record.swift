@@ -41,27 +41,71 @@ struct Record: AsyncParsableCommand {
         var requested = Set(Channel.allCases)
         if noMic || (replaying && replayRoom == nil) { requested.remove(.room) }
         if noSystem || (replaying && replayRemote == nil) { requested.remove(.remote) }
-        let channels = replaying ? requested : try Setup.prepare(requested)
+        var channels = replaying ? requested : try Setup.prepare(requested)
+        let models = try loadModels()
+        let keep = minutes.wordsToKeep()
+        // One terminal for the whole run: between meetings the screen stays up.
+        let terminal = Terminal.isInteractive ? Terminal() : nil
+        var look = skin
+        var saved: [LiveState.Saved] = []
+        do {
+            while true {
+                let meeting = try await recordMeeting(
+                    models: models, redaction: redaction, keep: keep, requested: requested, channels: channels,
+                    terminal: terminal, look: look)
+                if let minutes = meeting.saved { saved.append(minutes) }
+                look = meeting.look
+                guard meeting.again else { break }
+                // The next meeting uses whichever microphone is there by then.
+                channels = requested.filter { $0 != .room || replaying || !AudioDevices.inputs().isEmpty }
+            }
+        } catch {
+            terminal?.leaveFullScreen()
+            throw error
+        }
+        terminal?.leaveFullScreen()
+        if saved.isEmpty { Console.note("Nothing was recorded.") }
+        for minutes in saved {
+            Setup.finished(
+                URL(fileURLWithPath: minutes.path), turns: minutes.turns, speakers: minutes.speakers, offerToOpen: false)
+        }
+    }
+
+    /// How a meeting ended.
+    struct Meeting {
+        var saved: LiveState.Saved?
+        /// Start another (Space on the saved screen).
+        var again = false
+        var look: Look
+    }
+
+    /// Records one meeting: waits for Space and the go-ahead that everyone agrees, records until
+    /// Q, Ctrl-C, the window closing or the end of a replay, saves the minutes, then shows them
+    /// until the next choice.
+    private func recordMeeting(
+        models: LoadedModels, redaction: Set<PIICategory>, keep: [String], requested: Set<Channel>,
+        channels: Set<Channel>, terminal: Terminal?, look: Look
+    ) async throws -> Meeting {
         // With no microphone yet, the room channel is set up anyway, and one connected later is used.
         let awaitingMicrophone = requested.contains(.room) && !channels.contains(.room)
-        let models = try loadModels()
         let session = try await MeetingSession(
             models: models,
             configuration: MeetingSession.Configuration(
-                channels: requested, echoCancellation: !noEchoCancel, redaction: redaction))
+                channels: requested, echoCancellation: !noEchoCancel, redaction: redaction, keep: keep))
 
         let live = LiveState()
         let now = Date()
         live.update {
             $0.title = minutes.title(startedAt: now)
             $0.outputPath = minutes.outputURL(startedAt: now).path
-            $0.redaction = !redaction.isEmpty
+            $0.redaction = redaction
             $0.channels = channels
             $0.awaitingMicrophone = awaitingMicrophone
-            $0.look = skin
+            $0.look = look
         }
         let echo = await session.echoCancellationEnabled
         live.update { $0.echoCancellation = echo }
+        Task { await session.warmUp() }
 
         // Recording begins when Space is pressed (at once when there's no screen to press it on).
         // Until then the meters move, so you can check what's heard, but no audio goes anywhere,
@@ -70,13 +114,14 @@ struct Record: AsyncParsableCommand {
         let begin: @Sendable () -> Void = {
             guard clock.start() else { return }
             let date = Date()
+            let path = MinutesOptions.unused(minutes.outputURL(startedAt: date)).path
             live.update {
                 $0.startedAt = date
                 $0.title = minutes.title(startedAt: date)
-                $0.outputPath = minutes.outputURL(startedAt: date).path
+                $0.outputPath = path
             }
         }
-        if !Terminal.isInteractive { begin() }
+        if terminal == nil { begin() }
 
         // Audio flows capture callback -> feed -> session, in capture order, on one task.
         let (feed, feedInput) = AsyncStream.makeStream(of: (Channel, AudioChunk).self)
@@ -123,6 +168,7 @@ struct Record: AsyncParsableCommand {
                 try await capture.start()
                 _ = microphone.put(capture)
             } catch MicrophoneCapture.CaptureError.permissionDenied {
+                terminal?.leaveFullScreen()
                 try Setup.blocked(
                     "Mini Meeting Minutes isn't allowed to use the microphone.",
                     fix: "In System Settings › Privacy & Security › Microphone, turn on \(Setup.hostApp).",
@@ -220,19 +266,21 @@ struct Record: AsyncParsableCommand {
             for await update in session.updates {
                 live.apply(update)
                 if case .turns = update { save.yield() }
+                Self.logLatency(of: update, now: clock.seconds(to: HostTime.now()))
             }
         }
 
         // Show the live screen until q, Ctrl-C, or the end of a replay. Closing the window or
         // ending the process stops the recording the same way, but then no one is there to name
-        // the speakers: the minutes are saved as they are.
+        // the speakers: the minutes are saved as they are. Once they're saved, the same keys quit.
+        let (choices, choose) = AsyncStream.makeStream(of: Bool.self)
         let hungUp = Latch()
         let signals = [SIGINT, SIGHUP, SIGTERM].map { number in
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
             source.setEventHandler {
                 if number != SIGINT { hungUp.raise() }
-                stop.yield()
+                if live.snapshot.saved != nil { choose.yield(false) } else { stop.yield() }
             }
             source.resume()
             return source
@@ -242,8 +290,13 @@ struct Record: AsyncParsableCommand {
             for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_DFL) }
         }
         var screen = LiveScreen.start(
-            live: live, paused: paused, clock: clock, begin: begin, stop: stop, save: save)
-        if screen == nil { Console.note("Recording. Press Ctrl-C to stop.") }
+            terminal: terminal, live: live, clock: clock,
+            controls: LiveScreen.Controls(paused: paused, begin: begin, stop: stop, save: save, choose: choose))
+        if screen == nil {
+            Console.note(
+                "Recording. Make sure everyone taking part knows it's being recorded and transcribed, and agrees. "
+                    + "Press Ctrl-C to stop.")
+        }
         for await _ in stops { break }
         let unattended = hungUp.isRaised
         if unattended, let closing = screen {
@@ -271,8 +324,7 @@ struct Record: AsyncParsableCommand {
         guard let startedAt = live.snapshot.startedAt else {
             // Stopped before recording began: there's nothing to save.
             await screen?.close()
-            Console.note("Nothing was recorded.")
-            return
+            return Meeting(look: live.snapshot.look)
         }
         let names = Self.carryNames(from: live.snapshot, to: turns)
         live.update {
@@ -285,25 +337,28 @@ struct Record: AsyncParsableCommand {
         let speakers = MinutesDocument(
             title: "", startDate: startedAt, sources: [:], redaction: [], echoCancellation: false, turns: turns
         ).speakers
-        if let screen {
-            if !minutes.noNames && !speakers.isEmpty { await screen.askForNames(speakers) }
-            // Leave the final transcript, with names, on screen for a moment.
-            try? await Task.sleep(for: .seconds(2))
-            await screen.close()
-        }
+        if let screen, !minutes.noNames, !speakers.isEmpty { await screen.askForNames(speakers) }
 
         let snapshot = live.snapshot
         let outputURL = URL(fileURLWithPath: snapshot.outputPath)
         var document = MinutesDocument(
             title: snapshot.title, startDate: startedAt, duration: clock.seconds(to: HostTime.now()) ?? 0,
             sources: snapshot.sources, redaction: redaction, echoCancellation: echo, turns: turns,
-            names: snapshot.names, notes: snapshot.notes, inProgress: false)
+            names: snapshot.names, notes: snapshot.notes, consentConfirmedAt: snapshot.consentedAt, inProgress: false)
         if screen == nil && !unattended && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
-        // Replays are automated (tests, the README demo): don't wait for a key. Nor when the
-        // window has gone.
-        Setup.finished(
-            outputURL, turns: turns.count, speakers: document.speakers.count, offerToOpen: !replaying && !unattended)
+        let saved = LiveState.Saved(path: outputURL.path, turns: turns.count, speakers: document.speakers.count)
+        guard let screen else { return Meeting(saved: saved, look: live.snapshot.look) }
+
+        // The final minutes stay on screen, with what to do next.
+        live.update { $0.saved = saved }
+        var again = false
+        for await choice in choices {
+            again = choice
+            break
+        }
+        await screen.close()
+        return Meeting(saved: saved, again: again, look: live.snapshot.look)
     }
 
     /// Names given during the meeting belong to live labels, which the final relabeling can
@@ -353,6 +408,22 @@ struct Record: AsyncParsableCommand {
             }
             stop.yield()
         }
+    }
+
+    /// With MMM_DEBUG set, how far behind the meeting each update reaches the screen.
+    private static func logLatency(of update: ChannelUpdate, now: TimeInterval?) {
+        guard ProcessInfo.processInfo.environment["MMM_DEBUG"] != nil, let now else { return }
+        let line: String
+        switch update {
+        case .pending(let channel, let text):
+            line = String(format: "[%@] shown at %.2f: pending %d characters", channel.rawValue, now, text.count)
+        case .turns(let turns):
+            guard let last = turns.map(\.end).max() else { return }
+            line = String(format: "shown at %.2f: %d turns, the last ending %.1f s earlier", now, turns.count, now - last)
+        case .buffered:
+            return
+        }
+        FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
     static let systemPermissionHelp =
@@ -438,29 +509,37 @@ struct UncheckedBox<Value>: @unchecked Sendable {
     init(_ value: Value) { self.value = value }
 }
 
-/// The full-screen recording screen: drawn from the start of the recording until the minutes
-/// are final, reacting to keys and clicks throughout.
+/// The full-screen meeting screen: drawn from before the recording starts until its minutes are
+/// saved and it's time for the next, reacting to keys and clicks throughout.
 struct LiveScreen {
+    /// What keys and clicks can do to the meeting.
+    struct Controls: Sendable {
+        let paused: PauseFlag
+        /// Starts recording.
+        let begin: @Sendable () -> Void
+        let stop: AsyncStream<Void>.Continuation
+        /// Asks for the minutes file to be rewritten, after a note is added.
+        let save: AsyncStream<Void>.Continuation
+        /// On the saved screen: true for another meeting, false to quit.
+        let choose: AsyncStream<Bool>.Continuation
+    }
+
     let terminal: Terminal
     let live: LiveState
     let keys: Task<Void, Never>
     let drawing: Task<Void, Never>
     let namesDone: AsyncStream<Void>
 
-    /// Takes over the terminal, or returns nil when it isn't interactive. `begin` starts the
-    /// recording; `save` asks for the minutes file to be rewritten, after a note is added.
-    static func start(
-        live: LiveState, paused: PauseFlag, clock: RecordingClock, begin: @escaping @Sendable () -> Void,
-        stop: AsyncStream<Void>.Continuation, save: AsyncStream<Void>.Continuation
-    ) -> LiveScreen? {
-        guard Terminal.isInteractive else { return nil }
-        let terminal = Terminal()
+    /// Takes over the terminal (if it hasn't already), or returns nil when there is none.
+    static func start(terminal: Terminal?, live: LiveState, clock: RecordingClock, controls: Controls)
+        -> LiveScreen?
+    {
+        guard let terminal else { return nil }
         terminal.enterFullScreen()
         let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
         let keys = Task {
             for await key in terminal.keys() {
-                handle(
-                    key, live: live, paused: paused, begin: begin, stop: stop, save: save, finishNaming: finishNaming)
+                handle(key, live: live, controls: controls, finishNaming: finishNaming)
             }
         }
         let drawing = Task {
@@ -499,13 +578,12 @@ struct LiveScreen {
         for await _ in namesDone { break }
     }
 
-    /// Stops drawing and gives the terminal back.
+    /// Stops drawing and reading keys. The terminal stays full screen, for the next meeting.
     func close() async {
         drawing.cancel()
         _ = await drawing.value
         terminal.stopReadingKeys()
         keys.cancel()
-        terminal.leaveFullScreen()
     }
 
     private static func seconds(_ duration: Duration) -> Double {
@@ -515,18 +593,24 @@ struct LiveScreen {
     // MARK: Input
 
     static func handle(
-        _ key: Key, live: LiveState, paused: PauseFlag, begin: @Sendable () -> Void,
-        stop: AsyncStream<Void>.Continuation, save: AsyncStream<Void>.Continuation,
-        finishNaming: AsyncStream<Void>.Continuation
+        _ key: Key, live: LiveState, controls: Controls, finishNaming: AsyncStream<Void>.Continuation
     ) {
         let snapshot = live.snapshot
         if snapshot.naming != nil {
             if editNames(key, live: live) { finishNaming.yield() }
             return
         }
+        if let saved = snapshot.saved {
+            handleSaved(key, saved, snapshot: snapshot, live: live, controls: controls)
+            return
+        }
+        if snapshot.askingConsent {
+            handleConsent(key, snapshot: snapshot, live: live, controls: controls)
+            return
+        }
         // While a note is being typed, keys type into it; scrolling and clicks work as usual.
         if snapshot.draft != nil, let added = editNote(key, live: live) {
-            if added { save.yield() }
+            if added { controls.save.yield() }
             return
         }
         if snapshot.help {
@@ -562,19 +646,13 @@ struct LiveScreen {
         let busy = snapshot.stopping || snapshot.finished
         switch action {
         case .stop:
-            if !busy { stop.yield() }
-        case .pause:
+            if !busy { controls.stop.yield() }
+        case .pause, .resume:
             if !snapshot.started {
-                begin()
-            } else if !busy {
-                let nowPaused = paused.toggle()
-                live.update { $0.paused = nowPaused }
-            }
-        case .resume:
-            if !snapshot.started {
-                begin()
-            } else if !busy && paused.isPaused {
-                let nowPaused = paused.toggle()
+                // Before recording, everyone taking part has to know and agree.
+                if !busy { live.update { $0.askingConsent = true } }
+            } else if !busy && (action == .pause || controls.paused.isPaused) {
+                let nowPaused = controls.paused.toggle()
                 live.update { $0.paused = nowPaused }
             }
         case .name:
@@ -591,6 +669,70 @@ struct LiveScreen {
         case .skin: live.update { $0.look = $0.look.next }
         case .help: live.update { if $0.draft == nil { $0.help = true } }
         case .follow: live.update { $0.scroll = 0 }
+        case .consent, .decline, .newMeeting, .open, .reveal, .quit: break
+        }
+    }
+
+    /// The question before recording: Y (or a click on yes) confirms and starts, N or Escape
+    /// goes back.
+    private static func handleConsent(_ key: Key, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls) {
+        var agreed: Bool?
+        switch key {
+        case .char(let char) where char.lowercased() == "y": agreed = true
+        case .char(let char) where char.lowercased() == "n": agreed = false
+        case .escape: agreed = false
+        case .click(let x, let y):
+            switch snapshot.regions.last(where: { $0.contains(x, y) })?.action {
+            case .consent: agreed = true
+            case .decline: agreed = false
+            default: break
+            }
+        default: break
+        }
+        guard let agreed else { return }
+        live.update {
+            $0.askingConsent = false
+            if agreed { $0.consentedAt = Date() }
+        }
+        if agreed { controls.begin() }
+    }
+
+    /// The saved screen: Space for another meeting, Return (or O) opens the minutes, R shows them
+    /// in Finder, Q or Escape quits.
+    private static func handleSaved(
+        _ key: Key, _ saved: LiveState.Saved, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls
+    ) {
+        var action: ScreenAction?
+        switch key {
+        case .char(let char):
+            switch char.lowercased() {
+            case " ": action = .newMeeting
+            case "o": action = .open
+            case "r": action = .reveal
+            case "q": action = .quit
+            case "k": action = .skin
+            case "f": action = .follow
+            default: break
+            }
+        case .enter: action = .open
+        case .escape: action = .quit
+        case .up: scroll(1, live)
+        case .down: scroll(-1, live)
+        case .pageUp: scroll(10, live)
+        case .pageDown: scroll(-10, live)
+        case .wheelUp: scroll(3, live)
+        case .wheelDown: scroll(-3, live)
+        case .click(let x, let y): action = snapshot.regions.last { $0.contains(x, y) }?.action
+        default: break
+        }
+        switch action {
+        case .newMeeting: controls.choose.yield(true)
+        case .quit, .stop: controls.choose.yield(false)
+        case .open: Setup.openMinutes(saved.path)
+        case .reveal: Setup.showInFinder(saved.path)
+        case .skin: live.update { $0.look = $0.look.next }
+        case .follow: live.update { $0.scroll = 0 }
+        default: break
         }
     }
 

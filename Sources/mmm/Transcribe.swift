@@ -43,7 +43,8 @@ struct Transcribe: AsyncParsableCommand {
         let session = try await MeetingSession(
             models: models,
             configuration: MeetingSession.Configuration(
-                channels: Set(readers.map(\.0)), echoCancellation: !noEchoCancel, redaction: redaction))
+                channels: Set(readers.map(\.0)), echoCancellation: !noEchoCancel, redaction: redaction,
+                keep: minutes.wordsToKeep()))
         let echo = await session.echoCancellationEnabled
         let progress = Task {
             for await update in session.updates {
@@ -78,7 +79,7 @@ struct Transcribe: AsyncParsableCommand {
             return
         }
         if !minutes.noNames { document.names = promptForNames(document) }
-        let url = minutes.outputURL(startedAt: startDate)
+        let url = MinutesOptions.unused(minutes.outputURL(startedAt: startDate))
         try document.write(to: url)
         Setup.finished(url, turns: turns.count, speakers: document.speakers.count)
     }
