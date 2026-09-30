@@ -139,7 +139,8 @@ class Emulator:
 # Keys pressed during the demo, by seconds after the screen appears: Space, then Y to confirm that
 # everyone has agreed to the recording, a note ("\r" is Return), then synthwave mode for a while,
 # and back to the sidebar.
-KEYS = [(2, " "), (4, "y"), (12, "\rAsk finance for the infrastructure breakdown\r"), (24, "k"), (38, "k")]
+# During the meeting, typing takes a note, and commands start with a slash.
+KEYS = [(2, " "), (4, "y"), (12, "Ask finance for the infrastructure breakdown\r"), (24, "/look\r"), (38, "/look\r")]
 NAMES = ["Samantha", "Daniel", "Karen"]
 
 

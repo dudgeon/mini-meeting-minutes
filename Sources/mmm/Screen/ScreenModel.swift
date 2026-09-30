@@ -205,19 +205,18 @@ struct ScreenModel {
         return result
     }
 
-    /// Every key, for the help lists. `other` names the look that K switches to.
+    /// Every command and key, for the help lists. `other` names the look /look switches to.
     static func shortcuts(switchingTo other: String) -> [(key: String, action: String)] {
         [
-            ("return", "write a note; return adds it where you started typing, esc drops it"),
-            ("space", "pause or resume (paused audio is dropped, not kept)"),
-            ("q", "stop and save the minutes"),
-            ("o", "transcribe a recording you already have, like a voice memo (before you start)"),
-            ("n", "name the speakers"),
-            ("v", "visualizer: spectrum, waveform or off"),
-            ("k", "switch to \(other)"),
-            ("↑ ↓", "scroll the transcript, or use the mouse wheel"),
-            ("f", "jump back to the newest line"),
-            ("?", "show or hide these shortcuts"),
+            ("type", "during a meeting, a note: return adds it where you started typing, esc drops it"),
+            ("/stop", "stop and save the minutes (ctrl-c does too)"),
+            ("/pause", "pause or resume (paused audio is dropped, not kept)"),
+            ("/name", "name the speakers"),
+            ("/look", "switch to \(other)"),
+            ("/visual", "visualizer: spectrum, waveform or off"),
+            ("tab", "finish typing a command's name"),
+            ("↑ ↓", "scroll the transcript, or use the mouse wheel; end jumps back to the newest line"),
+            ("space", "before a meeting: start it (o opens a recording instead, q quits)"),
         ]
     }
 

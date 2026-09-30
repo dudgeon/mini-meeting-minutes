@@ -65,6 +65,55 @@ On an M1 MacBook Air with 8 GB, on battery, during a video call:
 - a 2-hour meeting with no dropped audio;
 - a screen that stays responsive.
 
+## A prebuilt, signed app (paused)
+
+Today the installer builds the app on each Mac, which needs Apple's developer tools and a few
+minutes. Shipping it prebuilt, in a disk image, would take installing down to about a minute. It's
+on hold; this is what it would take.
+
+**What Apple requires**
+
+- **Membership and a certificate.** An Apple Developer Program membership, and its **Developer ID
+  Application** certificate, with its private key, to sign the app. A **Developer ID Installer**
+  certificate as well, for an installer package rather than a disk image.
+- **Hardened runtime** when signing, with the `com.apple.security.device.audio-input` entitlement so
+  the microphone still works.
+- **Notarization.**
+  - Apple scans the signed build (`xcrun notarytool submit --wait`), and the ticket is then
+    stapled on (`xcrun stapler staple`).
+  - A bare command-line tool can't carry a ticket, so it ships inside a signed disk image or
+    package. Notarizing and stapling that outermost container covers everything in it.
+- **The tools are already here.** This Mac has `codesign`, `notarytool`, `stapler` and `hdiutil`
+  with just the command line tools: no Xcode needed.
+
+**The certificates**
+
+- **Reuse the ones the Duo project has.** In Keychain Access, export the Developer ID Application
+  certificate *with its private key* as a password-protected .p12. Move it privately, and never
+  into the repository.
+- **Notarizing needs its own credentials:** an App Store Connect API key (issuer ID, key ID and
+  .p8 file) suits automation best. An Apple ID with an app-specific password also works.
+- **Better still, keep them in GitHub.** Store them as GitHub Actions secrets, and a release
+  workflow can do the rest:
+  - import the .p12 into a temporary keychain;
+  - build, sign and notarize each tagged release, then publish it.
+
+  The certificate then never needs to sit on a laptop. Apple allows 75 notarizations a day, plenty
+  for releases.
+
+**To decide when it resumes**
+
+- **A tool in a disk image, or a real app?**
+  - A signed command-line tool still runs inside Terminal, so macOS still asks permission for
+    Terminal, not for Mini Meeting Minutes.
+  - For permissions of its own, and for a menu bar icon or a global hotkey, the capture has to run
+    in a process that belongs to a signed app bundle. That bundle needs its own usage explanations:
+    `NSMicrophoneUsageDescription`, and `NSAudioCaptureUsageDescription` for system audio.
+  - It could be a small helper that captures and hands audio to the screen in Terminal, in memory,
+    or a full app with a window of its own.
+- **Updates.** The one-line installer can stay the updater either way; a full app could use Sparkle.
+- **Building from source stays an option**, for anyone who wants to build what they can read.
+
 ## Other enhancements
 
 **Faster and more accurate**
@@ -93,9 +142,9 @@ On an M1 MacBook Air with 8 GB, on battery, during a video call:
 
 **Trust and reach**
 
-- **A signed, notarized app.** Permissions would then belong to Mini Meeting Minutes itself rather
-  than to Terminal. That's a narrower grant, and it opens the way to a menu bar icon and a global
-  hotkey.
+- **A prebuilt, signed app**, planned [above](#a-prebuilt-signed-app-paused). Permissions would
+  then belong to Mini Meeting Minutes itself rather than to Terminal: a narrower grant, and the way
+  to a menu bar icon and a global hotkey.
 - **Continuous integration.** Build, test and run the end-to-end check on every change.
 - **Other languages.** Language detection, the interface in the recognizer's other 24 languages,
   and name redaction beyond English.

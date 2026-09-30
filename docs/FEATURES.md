@@ -34,8 +34,11 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 - **Everyone agrees first.** Pressing **Space** asks you to confirm that everyone taking part knows
   the conversation is being recorded and transcribed, and agrees. Recording starts when you press
   **Y**, and the minutes note when you confirmed.
-- **Pause and resume** with **Space**. Paused audio is dropped, not held for later.
-- **Stop** with **Q**, **Ctrl-C** or by closing the window. The minutes are saved either way.
+- **For focused sessions.** The confirmation also says what the app is meant for: sessions where
+  everyone has agreed to a transcript, such as user research or stakeholder interviews. It adds
+  that company policy may not allow recording routine meetings.
+- **Pause and resume** with **/pause**. Paused audio is dropped, not held for later.
+- **Stop** with **/stop**, **Ctrl-C** or by closing the window. The minutes are saved either way.
 - **Another meeting straight after.** When the minutes are saved, press **Space** to set up the
   next one. The models stay loaded, so there's no wait.
 
@@ -54,15 +57,17 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
   seconds even in non-stop conversation.
 - **Checked again at the end.** When the meeting ends, every speaker is re-checked against the whole
   meeting, which fixes labels that drifted.
-- **Name speakers** any time with **N**, or when the meeting ends: the app shows something each
+- **Name speakers** any time with **/name**, or when the meeting ends: the app shows something each
   person said to help you tell who's who. Names follow the right person even if labels change at
   the end. Giving two labels the same name combines them.
 - **Talk time.** See each speaker's share of the talking, as it happens.
 
 ## Notes
 
-- **Write notes during the meeting.** Press **Return**, type, and press **Return** again (**Esc**
-  cancels). The box grows as you type, up to 1,000 characters, and pasting works.
+- **Write notes during the meeting.** Just type, and press **Return** to add the note (**Esc**
+  drops it). The box grows as you type, up to 1,000 characters, and pasting works.
+- **Typing can't set off a command.** During a meeting commands start with a slash, so a note like
+  "quick question: please pause" stays a note.
 - **In the right place.** A note goes into the transcript at the moment you started typing, and
   never splits someone's paragraph: one typed while someone was talking comes right after what they
   said.
@@ -118,13 +123,14 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 - **Sidebar**, the default, in the style of Claude's apps: a quiet sidebar with the status, clock,
   speakers and talk time, live levels for the microphone and the call, privacy checks and keys,
   beside a transcript that reads like a conversation.
-- **Synthwave mode** (**K**): a pixel-art sunset over a neon grid, whose city skyline is a live
+- **Synthwave mode** (**/look**, or **K** before a meeting): a pixel-art sunset over a neon grid, whose city skyline is a live
   spectrum analyzer, with the microphone left of the sun and the call to the right.
-- **Visualizers** (**V**): spectrum, waveform or off.
-- **Keyboard and mouse:** every key is listed on screen and clickable, and the mouse wheel scrolls.
-  **?** shows all the shortcuts.
+- **Visualizers** (**/visual**, or **V** before a meeting): spectrum, waveform or off.
+- **Keyboard and mouse:** every key and command is listed on screen and clickable, and the mouse
+  wheel scrolls. During a meeting, typing a slash lists the commands; before and after one, single
+  keys do things, and **?** shows them all.
 - **Scroll back** through the transcript while recording continues, and jump back to the newest
-  line with **F**.
+  line with **End**.
 - **After saving**, the finished minutes stay on screen: **Return** opens them, **R** shows them in
   Finder, **Space** starts another meeting and **Q** quits.
 - **Adapts to the window.** Narrow windows drop the sidebar, synthwave mode's picture shrinks with
@@ -134,8 +140,8 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 
 ## Reliability
 
-- **Saved as it goes, and finished on the way out.** The minutes are finalized when you press **Q**,
-  press Ctrl-C, close the window or quit Terminal.
+- **Saved as it goes, and finished on the way out.** The minutes are finalized when you type
+  **/stop**, press Ctrl-C, close the window or quit Terminal, even while speakers are being named.
 - **Microphone changes are handled.** Switch microphones mid-meeting, say to AirPods, and
   recording carries on with the new one.
 - **Warnings where you'll see them.** If the call side stays silent while other apps are playing

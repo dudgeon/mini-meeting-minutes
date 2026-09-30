@@ -13,7 +13,8 @@ set -uo pipefail
 
 REPO="${MMM_REPO:-https://github.com/dudgeon/mini-meeting-minutes.git}"
 BRANCH="${MMM_BRANCH:-main}"
-APP_DIR="${MMM_HOME:-$HOME/Applications/mini-meeting-minutes}"
+DEFAULT_APP_DIR="$HOME/Applications/mini-meeting-minutes"
+APP_DIR="${MMM_HOME:-$DEFAULT_APP_DIR}"
 BIN_DIR="$HOME/.local/bin"
 SHORTCUT="$HOME/Desktop/Mini Meeting Minutes.command"
 LOG="$HOME/Library/Logs/mini-meeting-minutes-install.log"
@@ -34,7 +35,8 @@ fail() {
 }
 
 # Runs a command with its output going to the log, showing a spinner and the time taken.
-run() {
+# Returns the command's status; `run` below stops the installer if it fails.
+attempt() {
   local label="$1"
   shift
   local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i=0 start=$SECONDS
@@ -50,10 +52,42 @@ run() {
   if wait "$pid"; then
     printf '\r  %s✓%s %s %s%ds%s   \n' "$G" "$N" "$label" "$D" $((SECONDS - start)) "$N"
   else
-    printf '\r  %s✗%s %s\n\n' "$R" "$N" "$label"
-    tail -n 15 "$LOG" | sed 's/^/    /'
-    fail "$label didn't finish."
+    printf '\r  %s✗%s %s\n' "$R" "$N" "$label"
+    return 1
   fi
+}
+
+run() {
+  attempt "$@" && return
+  printf '\n'
+  tail -n 15 "$LOG" | sed 's/^/    /'
+  fail "$1 didn't finish."
+}
+
+# Moves an earlier install to the newest version. Nothing in the app's folder is yours (minutes
+# live in Documents), so it's made to match the new version exactly: files an older build rewrote,
+# such as Package.resolved, can't block the update. Built files and joined models are kept. A
+# folder chosen with MMM_HOME may be someone's own copy, so it only ever moves forward.
+update() {
+  if [[ -f "$APP_DIR/.git/shallow" ]]; then
+    git -C "$APP_DIR" fetch --quiet --depth 1 "$REPO" "$BRANCH" || return
+  else
+    git -C "$APP_DIR" fetch --quiet "$REPO" "$BRANCH" || return
+  fi
+  if [[ "$APP_DIR" == "$DEFAULT_APP_DIR" ]]; then
+    git -C "$APP_DIR" reset --quiet --hard FETCH_HEAD
+  else
+    git -C "$APP_DIR" merge --quiet --ff-only FETCH_HEAD
+  fi
+}
+
+build() {
+  swift build --package-path "$APP_DIR" -c release --disable-keychain
+}
+
+# Builds left by older developer tools can trip up a newer compiler; starting afresh fixes that.
+build_from_scratch() {
+  rm -rf "$APP_DIR/.build" && build
 }
 
 uninstall() {
@@ -107,7 +141,21 @@ fi
 # 3. Download, or update an earlier install.
 step "Getting Mini Meeting Minutes"
 if [[ -d "$APP_DIR/.git" ]]; then
-  run "Updating" git -C "$APP_DIR" pull --ff-only
+  # A folder chosen with MMM_HOME may be someone's own copy: don't overwrite their changes.
+  if [[ "$APP_DIR" != "$DEFAULT_APP_DIR" && -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]]; then
+    fail "$APP_DIR has changes of its own, so it wasn't updated. Commit or discard them, then try again."
+  fi
+  if pgrep -xq mmm; then
+    say "  Mini Meeting Minutes is open. It's fine to carry on: the update is used the next time it starts."
+  fi
+  before="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  run "Downloading the update" update
+  after="$(git -C "$APP_DIR" rev-parse --short HEAD)"
+  if [[ "$before" == "$after" ]]; then
+    say "  ${D}Already the newest version ($after).${N}"
+  else
+    say "  ${D}Updated from $before to $after.${N}"
+  fi
 elif [[ -e "$APP_DIR" ]]; then
   fail "$APP_DIR already exists but isn't a Mini Meeting Minutes install. Move it away and try again."
 else
@@ -119,7 +167,10 @@ fi
 APP_DIR="$(cd -P "$APP_DIR" && pwd)"
 
 # 4. Build it and check the speech models.
-run "Building (3 to 5 minutes the first time)" swift build --package-path "$APP_DIR" -c release --disable-keychain
+if ! attempt "Building (3 to 5 minutes the first time)" build; then
+  say "  ${D}Trying again from scratch…${N}"
+  run "Building from scratch (3 to 5 minutes)" build_from_scratch
+fi
 run "Checking the speech models" "$APP_DIR/mmm" doctor --full
 
 # 5. Shortcuts: a double-clickable launcher on the Desktop and the `mmm` command.

@@ -115,9 +115,10 @@ class Timeline:
         returns = [moment for label, moment in presses if label == "return"]
         self.space = next(moment for label, moment in presses if label == "space")
         self.consented = next(moment for label, moment in presses if label == "Y")
-        self.naming = next(moment for label, moment in presses if label == "N")
-        self.note_opened, self.note_added = returns[0], returns[1]
-        self.stop = next(moment for label, moment in presses if label == "Q")
+        self.naming = next(moment for label, moment in presses if label == "/name")
+        # A note is just typed; Return adds it.
+        self.note_opened, self.note_added = capture["moments"]["note"] + self.offset, returns[0]
+        self.stop = next(moment for label, moment in presses if label == "/stop")
 
         def first(found):
             return next(moment + self.offset for grid, moment in zip(grids, times) if found(grid))

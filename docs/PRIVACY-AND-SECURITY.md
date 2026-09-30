@@ -99,7 +99,8 @@ crashes or is killed, so there's never a leftover file to clean up.
 - **Updated as it goes.** The minutes file is rewritten each time a stretch of speech is
   attributed and whenever you add a note, so a crash loses at most the last half-minute or so.
 - **Finished on exit.** Closing the window or quitting Terminal finishes the meeting the same way
-  **Q** does: the minutes are finalized and saved, just without the naming step.
+  **/stop** does: the minutes are finalized and saved, just without the naming step. If you're
+  already naming the speakers, the names typed so far are kept.
 - **Never overwritten.** New minutes never replace existing ones. If a file name is already taken,
   the new file gets a number.
 - **Plain text.** Anyone who can read your files can read your minutes. Treat them like any
@@ -158,6 +159,13 @@ The wording follows the strictest standard in the United States, all-party conse
 dozen states apply (California among them). It covers transcripts too, even though no audio is
 kept. If someone joins later, tell them as well. Laws differ between places and situations, and
 this isn't legal advice.
+
+The same screen says what the app is meant for:
+- targeted use, in focused sessions where everyone has agreed to a transcript, such as user
+  research or stakeholder interviews;
+- not recording routine meetings by default, which your company's policy may prohibit.
+
+Check with your risk advisors before using it.
 
 ## Permissions
 

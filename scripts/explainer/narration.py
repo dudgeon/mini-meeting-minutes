@@ -19,9 +19,9 @@ LINES = [
     (HER, "It never saves audio. Just the words.", 0.35),
     (HIM, "And it's open source, so you can check every line.", 2.8),  # time for the app to tell us apart
     (HER, "Oh, look! It just worked out which of us is which.", 0.4),
-    (HIM, "This is speaker identification. To put our names on the notes, just press N.", 1.7),
-    (HER, "Now I'm Sam, and he's Dan. Need to remember something? Press return to write a quick inline note.", 1.0),
-    (HIM, "When you're done, press Q, and your minutes are saved as a markdown file.", 3.2),
+    (HIM, "This is speaker identification. To put our names on the notes, just type slash name.", 1.7),
+    (HER, "Now I'm Sam, and he's Dan. Need to remember something? Just type it, as a quick inline note.", 1.0),
+    (HIM, "When you're done, type slash stop, and your minutes are saved as a markdown file.", 3.2),
     (HER, "Mini Meeting Minutes. Private, local, and open source.", 1.0),  # moved to the end card
 ]
 

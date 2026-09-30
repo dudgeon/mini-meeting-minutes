@@ -248,7 +248,7 @@ struct SynthwaveView {
             draw(row, y: first + offset)
         }
         if scroll > 0 {
-            let note = " ▲ SCROLLED BACK · F FOLLOWS "
+            let note = " ▲ SCROLLED BACK · END FOLLOWS "
             canvas.text(width - 3 - note.count, bottom, note, fg: Palette.night, bg: Palette.yellow, bold: true)
             canvas.region(width - 3 - note.count, bottom, note.count, 1, .follow)
         }
@@ -296,23 +296,30 @@ struct SynthwaveView {
             return
         }
         var keys: [(String, String, ScreenAction)] =
-            state.saved != nil
+            state.started && !state.stopping && !state.finished && state.saved == nil
+            ? [("/STOP", "SAVE", .stop), ("/PAUSE", state.paused ? "RESUME" : "PAUSE", .pause),
+               ("/NAME", "NAME", .name), ("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer),
+               ("/HELP", "HELP", .help)]
+            : state.saved != nil
             ? [("SPACE", "NEW", .newMeeting), ("O", "OPEN FILE", .openRecording), ("RETURN", "MINUTES", .open),
                ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
             : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
-            : !state.started
-            ? [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording), ("Q", "QUIT", .stop),
+            : [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording), ("Q", "QUIT", .stop),
                ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help)]
-            : [
-                ("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("Q", "STOP & SAVE", .stop),
-                ("RETURN", "NOTE", .note), ("N", "NAME", .name), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
-                ("?", "HELP", .help),
-            ]
-        // In a narrow window the visualizer key goes first, then help; K (the way back) stays.
+        // In a narrow window the visualizer key goes first, then help; the way back to the sidebar stays.
         func fits() -> Bool { keys.reduce(2) { $0 + $1.0.count + $1.1.count + 4 } - 3 <= width - 2 }
-        for dropped in ["V", "?", "R", "O"] where !fits() { keys.removeAll { $0.0 == dropped } }
+        for dropped in ["V", "/VISUAL", "?", "/HELP", "R", "O"] where !fits() { keys.removeAll { $0.0 == dropped } }
         var x = 2
+        if state.started && !state.stopping && !state.finished && state.saved == nil {
+            // During a meeting, typing takes a note.
+            let prompt = "✎ TYPE A NOTE"
+            if fits() && keys.reduce(2 + prompt.count + 3, { $0 + $1.0.count + $1.1.count + 4 }) - 3 <= width - 2 {
+                canvas.text(x, y, prompt, fg: Palette.cyan, bold: true)
+                canvas.region(x, y, prompt.count, 1, .note)
+                x += prompt.count + 3
+            }
+        }
         for (key, label, action) in keys {
             let span = key.count + 1 + label.count
             guard x + span <= width - 2 else { break }
@@ -324,9 +331,18 @@ struct SynthwaveView {
     }
 
     /// The footer while a note is typed: the note's end, a cursor, and what Return and Escape do.
+    /// A slash and a word is a command instead, with the commands it could be.
     private mutating func drawDraft(_ draft: LiveState.NoteDraft, y: Int) {
-        let label = " ✎ NOTE "
-        let help = "RETURN ADDS IT AT \(ScreenModel.shortTime(draft.start ?? state.elapsed)) · ESC CANCELS"
+        let command = Command.isCommand(draft.text)
+        let label = command ? " / COMMAND " : " ✎ NOTE "
+        let chosen = Command.chosen(draft.text)
+        let help =
+            command
+            ? chosen.map { "RETURN RUNS /\($0.rawValue.uppercased()) · ESC CANCELS" }
+                ?? (Command.matching(draft.text).isEmpty
+                    ? "NO SUCH COMMAND · ESC CLEARS IT"
+                    : Command.matching(draft.text).map { "/" + $0.rawValue.uppercased() }.joined(separator: " "))
+            : "RETURN ADDS IT AT \(ScreenModel.shortTime(draft.start ?? state.elapsed)) · ESC CANCELS"
         let x = 2 + label.count + 1
         let room = max(8, width - x - help.count - 5)
         canvas.text(2, y, label, fg: Palette.night, bg: Palette.yellow, bold: true)
@@ -396,11 +412,15 @@ struct SynthwaveView {
         let bg = Palette.strip
         let w = min(width - 2, 76)
         let recording = state.recording != nil
-        let lines = (recording ? SidebarView.recordingConsentText : SidebarView.consentText).wrapped(to: w - 6)
+        // What the law asks, then (dimmer) what the app is for; in a short window, as much as fits.
+        let rule = (recording ? SidebarView.recordingConsentText : SidebarView.consentText).wrapped(to: w - 6)
+        var lines = rule.map { ($0, Palette.text) } + [("", Palette.text)]
+            + SidebarView.policyText.wrapped(to: w - 6).map { ($0, Palette.dim) }
+        lines = Array(lines.prefix(max(rule.count, height - 9)))
         let title = recording ? "BEFORE YOU TRANSCRIBE" : "BEFORE YOU RECORD"
         let (x, y) = dialog(title, width: w, height: lines.count + 7)
         for (index, line) in lines.enumerated() {
-            canvas.text(x + 3, y + 2 + index, line, fg: Palette.text, bg: bg)
+            canvas.text(x + 3, y + 2 + index, line.0, fg: line.1, bg: bg)
         }
         let row = y + lines.count + 3
         canvas.text(

@@ -28,8 +28,10 @@ mmm transcribe --room mic.m4a --remote call.m4a   # separate room and call recor
    back.
 3. **Recording.**
    - Words appear as people speak, and who said them follows a couple of seconds after a pause.
-   - Add notes with **Return**, name speakers with **N**, and pause with **Space**.
-4. **Q to stop.**
+   - To add a note, just type it and press **Return**.
+   - Commands start with a slash, so a note can never set one off: **/name** names the speakers,
+     and **/pause** pauses.
+4. **/stop to finish** (or **Ctrl-C**).
    - Everything still in progress is finished, and every speaker is re-checked across the whole
      meeting.
    - The app then asks you to name each speaker, showing something they said. **Return** moves on,
@@ -44,21 +46,36 @@ mmm transcribe --room mic.m4a --remote call.m4a   # separate room and call recor
 Closing the window or quitting Terminal also stops and saves the meeting, just without the naming
 step.
 
-## Keys
+## Keys and commands
+
+**During a meeting**, the box at the bottom always takes a note. Commands start with a slash, so no
+sentence you type can stop, pause or change the meeting by accident:
+
+| Type | Does |
+|---|---|
+| Anything | A note. **Return** adds it where you started typing, **Esc** drops it |
+| **/stop** | Stop and save. **Ctrl-C** does the same |
+| **/pause** | Pause, or resume. Paused audio is dropped, not buffered |
+| **/name** | Name the speakers, any time |
+| **/look** | Switch between the sidebar and synthwave mode |
+| **/visual** | Switch the visualizer: spectrum, waveform, off |
+| **/help** | All the commands |
+
+Typing a slash lists the commands; **Return** runs the one that fits, and **Tab** completes its
+name. **↑ ↓**, Page Up/Down and the mouse wheel scroll the transcript, and **End** jumps back to
+the newest line.
+
+**Before a meeting starts**, and once its minutes are saved, single keys do things:
 
 | Key | Does |
 |---|---|
-| **Space** | Start recording (after you confirm everyone has agreed); then pause or resume. Paused audio is dropped, not buffered |
-| **Return** | Write a note; **Return** again adds it, **Esc** cancels |
-| **Q** or Ctrl-C | Stop and save |
-| **O** | Before recording, or once the minutes are saved: transcribe a recording instead. Dragging one onto the window does the same |
-| **N** | Name the speakers, any time |
-| **V** | Switch the visualizer: spectrum, waveform, off |
-| **K** | Switch between the sidebar and synthwave mode |
-| **↑ ↓**, Page Up/Down, mouse wheel | Scroll the transcript; **F** jumps back to the newest line |
-| **?** | All the shortcuts |
+| **Space** | Start recording, after you confirm everyone has agreed. On the saved screen: another meeting |
+| **O** | Transcribe a recording instead. Dragging one onto the window does the same |
+| **Q** | Quit |
+| **Return** | On the saved screen: open the minutes (**R** shows them in Finder) |
+| **K**, **V**, **?** | Switch the look, the visualizer, and show all the keys |
 
-The keys listed on screen are clickable too. Because the screen takes mouse clicks, hold
+The keys and commands listed on screen are clickable too. Because the screen takes mouse clicks, hold
 **⌥ Option** to select text with the mouse. Narrow windows hide the sidebar, and synthwave mode's
 picture shrinks with the window.
 
@@ -113,8 +130,8 @@ For a voice memo, drag it from Voice Memos to your desktop first.
    - a progress bar and the speed show how far along it is;
    - an hour-long recording takes about a minute on a recent Mac.
 
-   **Space** pauses, **N** names speakers, **Return** adds a note at that point in the recording,
-   and **Q** stops early and keeps what's been transcribed.
+   Typing adds a note at that point in the recording, **/pause** pauses, **/name** names speakers,
+   and **/stop** stops early and keeps what's been transcribed.
 3. **Saved.** The minutes are dated from the recording and titled with its name (a voice memo's
    own title is used).
 

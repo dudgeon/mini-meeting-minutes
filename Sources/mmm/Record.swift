@@ -395,12 +395,21 @@ struct Record: AsyncParsableCommand {
         // ending the process stops the recording the same way, but then no one is there to name
         // the speakers: the minutes are saved as they are. Once they're saved, the same keys quit.
         let hungUp = Latch()
+        let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
         let signals = [SIGINT, SIGHUP, SIGTERM].map { number in
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
             source.setEventHandler {
                 if number != SIGINT { hungUp.raise() }
-                if live.snapshot.saved != nil { choose.yield(.quit) } else { stop.yield() }
+                if live.snapshot.saved != nil {
+                    choose.yield(.quit)
+                } else if live.snapshot.naming?.final == true {
+                    // While the speakers are being named: keep the names so far, and save.
+                    live.update { $0.naming = nil }
+                    finishNaming.yield()
+                } else {
+                    stop.yield()
+                }
             }
             source.resume()
             return source
@@ -410,7 +419,7 @@ struct Record: AsyncParsableCommand {
             for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_DFL) }
         }
         var screen = LiveScreen.start(
-            terminal: terminal, live: live, clock: recording == nil ? clock : nil,
+            terminal: terminal, live: live, clock: recording == nil ? clock : nil, naming: (namesDone, finishNaming),
             controls: LiveScreen.Controls(
                 paused: paused, begin: begin, stop: stop, save: save, choose: choose, openRecording: openRecording,
                 declined: declined))
@@ -481,12 +490,14 @@ struct Record: AsyncParsableCommand {
         let saved = LiveState.Saved(path: outputURL.path, turns: turns.count, speakers: document.speakers.count)
         guard let screen else { return Meeting(saved: saved, look: live.snapshot.look) }
 
-        // The final minutes stay on screen, with what to do next.
+        // The final minutes stay on screen, with what to do next, unless the window has closed.
         live.update { $0.saved = saved }
         var next = Next.quit
-        for await choice in choices {
-            next = choice
-            break
+        if !hungUp.isRaised {
+            for await choice in choices {
+                next = choice
+                break
+            }
         }
         await screen.close()
         return Meeting(saved: saved, next: next, look: live.snapshot.look)
@@ -725,12 +736,13 @@ struct LiveScreen {
 
     /// Takes over the terminal (if it hasn't already), or returns nil when there is none. The
     /// meeting's clock drives the time shown; without one (a recording), whatever reads it does.
-    static func start(terminal: Terminal?, live: LiveState, clock: RecordingClock?, controls: Controls)
-        -> LiveScreen?
-    {
+    static func start(
+        terminal: Terminal?, live: LiveState, clock: RecordingClock?,
+        naming: (done: AsyncStream<Void>, finish: AsyncStream<Void>.Continuation), controls: Controls
+    ) -> LiveScreen? {
         guard let terminal else { return nil }
         terminal.enterFullScreen()
-        let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
+        let (namesDone, finishNaming) = naming
         let keys = Task {
             for await key in terminal.keys() {
                 handle(key, live: live, controls: controls, finishNaming: finishNaming)
@@ -802,13 +814,14 @@ struct LiveScreen {
             handleConsent(key, snapshot: snapshot, live: live, controls: controls)
             return
         }
-        // While a note is being typed, keys type into it; scrolling and clicks work as usual.
-        if snapshot.draft != nil, let added = editNote(key, live: live) {
-            if added { controls.save.yield() }
-            return
-        }
         if snapshot.help {
             live.update { $0.help = false }
+            return
+        }
+        // While a meeting runs, the prompt box takes everything typed: a note, or a command after
+        // a slash. So no sentence typed into it can stop, pause or rearrange the meeting.
+        // Scrolling and clicks work as usual.
+        if snapshot.started && !snapshot.stopping && !snapshot.finished && type(key, live: live, controls: controls) {
             return
         }
         // A file dropped on the window arrives as a paste of its path: before recording, that's a
@@ -817,6 +830,7 @@ struct LiveScreen {
             if !snapshot.started && snapshot.recording == nil && !snapshot.stopping { dropped(text, live, controls) }
             return
         }
+        // Before a meeting starts, and while it finishes, single keys do things.
         var action: ScreenAction?
         switch key {
         case .char(let char):
@@ -843,7 +857,13 @@ struct LiveScreen {
         case .click(let x, let y): action = snapshot.regions.last { $0.contains(x, y) }?.action
         default: break
         }
-        guard let action else { return }
+        if let action { perform(action, snapshot: snapshot, live: live, controls: controls) }
+    }
+
+    /// Does what a key, a click or a slash command asks.
+    private static func perform(
+        _ action: ScreenAction, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls
+    ) {
         let busy = snapshot.stopping || snapshot.finished
         switch action {
         case .stop:
@@ -958,15 +978,18 @@ struct LiveScreen {
         live.update { $0.scroll = max(0, min($0.maxScroll, $0.scroll + rows)) }
     }
 
-    /// Types into the note being written: Return adds it, Escape drops it. Returns nil for keys
-    /// that aren't for the note (scrolling, clicks), otherwise whether a note was added.
-    private static func editNote(_ key: Key, live: LiveState) -> Bool? {
-        var result: Bool? = false
+    /// Types into the prompt box while a meeting runs: a note, added where typing began when
+    /// Return is pressed, or a command after a slash, run by Return. Escape clears it. Returns
+    /// false for keys that aren't typing (scrolling, clicks).
+    private static func type(_ key: Key, live: LiveState, controls: Controls) -> Bool {
+        switch key {
+        case .char, .paste, .backspace, .enter, .escape, .tab: break
+        default: return false
+        }
+        var command: Command?
+        var added = false
         live.update { state in
-            guard var draft = state.draft else {
-                result = nil
-                return
-            }
+            var draft = state.draft ?? LiveState.NoteDraft()
             switch key {
             case .char(let char):
                 draft.start = draft.start ?? state.elapsed
@@ -978,22 +1001,29 @@ struct LiveScreen {
             case .backspace:
                 if !draft.text.isEmpty { draft.text.removeLast() }
             case .tab:
-                break
-            case .enter:
-                state.draft = draft
-                result = state.addDraft()
-                if result == true { state.scroll = 0 }
-                return
+                if let first = Command.matching(draft.text).first { draft.text = "/" + first.rawValue }
             case .escape:
                 state.draft = nil
                 return
-            default:
-                result = nil
+            case .enter:
+                if Command.isCommand(draft.text) {
+                    // A command runs; a slash and a word that isn't one stays, to be fixed.
+                    command = Command.chosen(draft.text)
+                    if command != nil { state.draft = nil }
+                    return
+                }
+                state.draft = draft
+                added = state.addDraft()
+                if added { state.scroll = 0 }
                 return
+            default:
+                break
             }
-            state.draft = draft
+            state.draft = draft.text.isEmpty ? nil : draft
         }
-        return result
+        if added { controls.save.yield() }
+        if let command { perform(command.action, snapshot: live.snapshot, live: live, controls: controls) }
+        return true
     }
 
     /// Edits names in the naming dialog. Returns true when the end-of-meeting dialog closes.

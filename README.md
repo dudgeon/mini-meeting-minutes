@@ -26,6 +26,9 @@ Mini Meeting Minutes is built around a few promises:
   who said it.
 - **Consent first.** Nothing is recorded until you confirm that everyone taking part knows and
   agrees.
+- **For focused sessions, not every meeting.** It's meant for sessions where everyone has agreed to
+  a transcript, such as user research or stakeholder interviews. Your company's policy may not allow
+  recording routine meetings, so check with your risk advisors before using it.
 - **Sensitive numbers blanked out.** Social Security, card and account numbers are removed before
   anything is shown or saved. Names, emails and phone numbers can be too.
 - **Works where you meet:** in person, on a call, or both, with speakers or headphones, and with
@@ -72,11 +75,12 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
 3. Press **Space** to start recording, then **Y** to confirm that everyone taking part knows the
    conversation is being recorded and transcribed, and has agreed. Nothing is recorded until then,
    but the meters already move, so you can check that your microphone is heard.
-4. To jot something down, press **Return**, type your note, and press **Return** again. It goes
-   into the transcript at the moment you started typing.
-5. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
-   skip them). Then press **Return** to open your minutes, **Space** to record another meeting,
-   or **Q** to quit.
+4. To jot something down, just type it and press **Return**. It goes into the transcript at the
+   moment you started typing. While recording, commands start with a slash, so typing a note can
+   never set one off: **/pause**, **/name** to name the speakers, and **/help** for the rest.
+5. When the meeting is over, type **/stop** and press **Return** (or press **Ctrl-C**). Type a
+   name for each speaker (or press **Return** to skip them). Then press **Return** to open your
+   minutes, **Space** to record another meeting, or **Q** to quit.
 
 Your minutes are saved in the **Minutes** folder inside **Documents**.
 

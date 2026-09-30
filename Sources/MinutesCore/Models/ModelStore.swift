@@ -88,12 +88,17 @@ public struct ModelStore: Sendable {
         manifest.sources.map { ($0.name, $0.repo, $0.revision, $0.license) }
     }
 
-    /// Reassembles split files that aren't on disk yet. Cheap when there's nothing to do.
+    /// Reassembles split files that aren't on disk yet, or that were joined from an earlier
+    /// version of a model. Cheap when there's nothing to do.
     public func prepare(progress: (String) -> Void = { _ in }) throws {
         for file in manifest.files {
             guard let parts = file.parts else { continue }
             let target = url(file.path)
-            if let size = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize, size == file.size {
+            // A stamp beside the joined file records the checksum it was joined to. An updated
+            // model has a new one, even when it's the same size, so it's joined afresh.
+            if let size = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize, size == file.size,
+                (try? String(contentsOf: Self.stamp(for: target), encoding: .utf8)) == file.sha256
+            {
                 continue
             }
             progress("Reassembling \(file.path) from \(parts.count) parts")
@@ -101,32 +106,44 @@ public struct ModelStore: Sendable {
         }
     }
 
-    /// Checks every vendored file (or its parts) against the manifest. Returns problems found.
+    /// Checks every vendored file (or its parts), and every file joined from parts, against the
+    /// manifest. Returns problems found.
     public func verify() -> [String] {
         var problems: [String] = []
         for file in manifest.files {
-            do {
-                var hasher = SHA256()
-                var size = 0
-                let pieces = file.parts ?? [file.path]
-                for piece in pieces {
-                    let handle = try FileHandle(forReadingFrom: url(piece))
-                    defer { try? handle.close() }
-                    while let block = try handle.read(upToCount: 1 << 20), !block.isEmpty {
-                        hasher.update(data: block)
-                        size += block.count
+            var checks = [file.parts ?? [file.path]]
+            if file.parts != nil, FileManager.default.fileExists(atPath: url(file.path).path) {
+                checks.append([file.path])  // the joined file the app loads
+            }
+            for pieces in checks {
+                do {
+                    var hasher = SHA256()
+                    var size = 0
+                    for piece in pieces {
+                        let handle = try FileHandle(forReadingFrom: url(piece))
+                        defer { try? handle.close() }
+                        while let block = try handle.read(upToCount: 1 << 20), !block.isEmpty {
+                            hasher.update(data: block)
+                            size += block.count
+                        }
                     }
+                    let what = pieces.count > 1 ? "\(file.path) (its parts)" : file.path
+                    if size != file.size {
+                        problems.append("\(what): \(size) bytes, expected \(file.size)")
+                    } else if hasher.finalize().hexString != file.sha256 {
+                        problems.append("\(what): SHA-256 mismatch")
+                    }
+                } catch {
+                    problems.append("\(file.path): \(error.localizedDescription)")
                 }
-                if size != file.size {
-                    problems.append("\(file.path): \(size) bytes, expected \(file.size)")
-                } else if hasher.finalize().hexString != file.sha256 {
-                    problems.append("\(file.path): SHA-256 mismatch")
-                }
-            } catch {
-                problems.append("\(file.path): \(error.localizedDescription)")
             }
         }
         return problems
+    }
+
+    /// Where the checksum a split file was joined to is kept.
+    static func stamp(for target: URL) -> URL {
+        target.appendingPathExtension("sha256")
     }
 
     private func reassemble(_ file: Manifest.File, parts: [String], into target: URL) throws {
@@ -164,6 +181,7 @@ public struct ModelStore: Sendable {
         }
         _ = try? fileManager.removeItem(at: target)
         try fileManager.moveItem(at: temporary, to: target)
+        try file.sha256.write(to: Self.stamp(for: target), atomically: true, encoding: .utf8)
     }
 }
 

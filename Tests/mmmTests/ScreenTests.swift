@@ -264,6 +264,7 @@ final class Calls<Value: Sendable>: Sendable {
     let live = LiveState()
     let paused = PauseFlag()
     let saves: AsyncStream<Void>
+    let stops: AsyncStream<Void>
     let choices: AsyncStream<Record.Next>
     let controls: LiveScreen.Controls
     let naming: AsyncStream<Void>.Continuation
@@ -274,19 +275,33 @@ final class Calls<Value: Sendable>: Sendable {
     init() {
         let live = live
         let save: AsyncStream<Void>.Continuation
+        let stop: AsyncStream<Void>.Continuation
         let choose: AsyncStream<Record.Next>.Continuation
         let (opened, declined) = (opened, declined)
         (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        (stops, stop) = AsyncStream.makeStream(of: Void.self)
         (choices, choose) = AsyncStream.makeStream(of: Record.Next.self)
         controls = LiveScreen.Controls(
-            paused: paused, begin: { live.update { $0.startedAt = Date() } },
-            stop: AsyncStream.makeStream(of: Void.self).continuation, save: save, choose: choose,
+            paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop, save: save, choose: choose,
             openRecording: { opened.record($0) }, declined: { declined.record(true) })
         naming = AsyncStream.makeStream(of: Void.self).continuation
     }
 
     func press(_ keys: Key...) {
         for key in keys { LiveScreen.handle(key, live: live, controls: controls, finishNaming: naming) }
+    }
+
+    /// Types text key by key, as a person would.
+    func type(_ text: String) {
+        for char in text { press(.char(char)) }
+    }
+
+    /// How many times the meeting was asked to stop.
+    func stopRequests() async -> Int {
+        controls.stop.finish()
+        var count = 0
+        for await _ in stops { count += 1 }
+        return count
     }
 
     @Test func recordingStartsOnlyOnceEveryoneHasAgreed() {
@@ -300,8 +315,63 @@ final class Calls<Value: Sendable>: Sendable {
         #expect(live.snapshot.askingConsent)
         press(.char("y"))
         #expect(live.snapshot.started && live.snapshot.consentedAt != nil && !paused.isPaused)
-        press(.char(" "))
-        #expect(paused.isPaused && live.snapshot.paused)
+        type("/pause")
+        press(.enter)
+        #expect(paused.isPaused && live.snapshot.paused && live.snapshot.draft == nil)
+    }
+
+    @Test func sentencesTypedInAMeetingOnlyEverBecomeNotes() async {
+        press(.char(" "), .char("y"))
+        let look = live.snapshot.look
+        let sentence = "quick question: please pause the vendor call? keep notes, name who's next /stop"
+        type(sentence)
+        let state = live.snapshot
+        #expect(state.draft?.text == sentence)
+        #expect(!state.paused && !paused.isPaused && state.look == look && state.naming == nil && !state.help)
+        press(.enter)
+        #expect(live.snapshot.notes.map(\.text) == [sentence])
+        #expect(await stopRequests() == 0)
+    }
+
+    @Test func slashCommandsRunTheMeeting() async {
+        live.update {
+            $0.startedAt = Date()
+            $0.turns = LookTests.snapshot().turns
+        }
+        let look = live.snapshot.look
+        type("/pa")
+        press(.enter)  // the only command that fits
+        #expect(paused.isPaused)
+        type("/resume")
+        press(.enter)
+        #expect(!paused.isPaused)
+        type("/st")
+        press(.tab)  // completes the name
+        #expect(live.snapshot.draft?.text == "/stop")
+        press(.escape)
+        #expect(live.snapshot.draft == nil)
+        type("/look")
+        press(.enter)
+        #expect(live.snapshot.look != look)
+        type("/xyz")
+        press(.enter)  // not a command: nothing happens, and it stays to be fixed
+        #expect(live.snapshot.draft?.text == "/xyz" && live.snapshot.notes.isEmpty)
+        press(.escape)
+        type("/api is down again")
+        press(.enter)  // a slash and more than a word is a note
+        #expect(live.snapshot.notes.map(\.text) == ["/api is down again"])
+        type("/name")
+        press(.enter)
+        #expect(live.snapshot.naming != nil)
+        press(.escape)
+        type("/help")
+        press(.enter)
+        #expect(live.snapshot.help)
+        press(.char("x"))  // any key closes it
+        #expect(!live.snapshot.help && live.snapshot.draft == nil)
+        type("/stop")
+        press(.enter)
+        #expect(await stopRequests() == 1)
     }
 
     @Test func theSavedScreenStartsAnotherMeetingOrQuits() async throws {
@@ -358,8 +428,7 @@ final class Calls<Value: Sendable>: Sendable {
         let (live, controls, saves) = (live, controls, saves)
         live.update { $0.elapsed = 10 }
         press(.char(" "), .char("y"))
-        press(.enter)
-        #expect(live.snapshot.draft != nil)
+        #expect(live.snapshot.draft == nil)
         live.update { $0.elapsed = 12 }  // typing starts two seconds later...
         press(.char("q"), .char("n"), .paste("\nnext steps"), .backspace)
         live.update { $0.elapsed = 30 }  // ...and ends much later
@@ -372,8 +441,8 @@ final class Calls<Value: Sendable>: Sendable {
         for await _ in saves { requested += 1 }
         #expect(requested == 1)
 
-        // Escape drops a note, and an empty one isn't added.
-        press(.enter, .char("x"), .escape, .enter, .enter)
+        // Escape drops a note, and Return on an empty box adds nothing.
+        press(.char("x"), .escape, .enter, .enter)
         #expect(live.snapshot.notes.count == 1 && live.snapshot.draft == nil)
     }
 }

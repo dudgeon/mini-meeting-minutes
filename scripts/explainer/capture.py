@@ -23,6 +23,7 @@ def record(work, app):
     for old in minutes.glob("*.md"):
         old.unlink()
     stream, keys = [], []  # (monotonic time, text drawn), (monotonic time, badge)
+    moments = {}  # when things without a key of their own happened
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     pid, fd = pty.fork()
@@ -75,17 +76,19 @@ def record(work, app):
         pump(max(0.0, start + narration_time - time.monotonic()))
 
     until(lines[5]["end"] + 0.25)
-    press("n", 0.35, badge="N")                                   # name the speakers
+    press("/name", 0.07)                                          # name the speakers
+    press("\r", 0.35, badge="/name")
     press("Sam\r", 0.11)
     press("Dan\r", 0.11)
     press("\x1b", 0.2)                                            # esc, in case there are more
     until(lines[6]["end"] + 0.1)
-    press("\r", 0.2, badge="return")                              # an inline note
+    moments["note"] = time.monotonic()                            # an inline note: just typing
     press("Send the explainer to the team", 0.07)
     press("\r", 0.1, badge="return")
     until(lines[7]["end"] + 0.3)
+    press("/stop", 0.07)                                          # stop and save
     mark = len(stream)
-    press("q", 0, badge="Q")                                      # stop and save
+    press("\r", 0, badge="/stop")
     wait_for("Who was speaking?", mark)
     pump(0.6)
     press("\r", 0.45, badge="return")                             # keep both names
@@ -98,4 +101,4 @@ def record(work, app):
     if not list(minutes.glob("*.md")):
         raise SystemExit("the app saved no minutes")
     with open(work / "capture.pkl", "wb") as handle:
-        pickle.dump({"stream": stream, "keys": keys, "start": start}, handle)
+        pickle.dump({"stream": stream, "keys": keys, "moments": moments, "start": start}, handle)

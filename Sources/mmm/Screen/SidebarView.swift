@@ -86,7 +86,11 @@ struct SidebarView {
                 ? [("y", "yes, start", .consent), ("n", "not yet", .decline)]
                 : [("y", "yes, transcribe", .consent), ("n", "not now", .decline)]
         }
-        if state.draft != nil { return [("return", "add the note", nil), ("esc", "cancel", nil)] }
+        if let draft = state.draft {
+            return Command.isCommand(draft.text)
+                ? [("return", "run it", nil), ("tab", "complete it", nil), ("esc", "cancel", nil)]
+                : [("return", "add the note", nil), ("esc", "cancel", nil)]
+        }
         if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         if !state.started {
             return [
@@ -94,12 +98,15 @@ struct SidebarView {
                 ("k", "synthwave", .skin), ("?", "all shortcuts", .help),
             ]
         }
+        // During a meeting, typing takes notes, so commands start with a slash.
         return [
-            ("return", "add a note", .note), ("space", state.paused ? "resume" : "pause", .pause),
-            ("q", "stop and save", .stop), ("n", "name speakers", .name), ("k", "synthwave", .skin),
-            ("?", "all shortcuts", .help),
+            ("/stop", "stop and save", .stop), ("/pause", state.paused ? "resume" : "pause", .pause),
+            ("/name", "name speakers", .name), ("/look", "synthwave", .skin), ("/help", "all commands", .help),
         ]
     }
+
+    /// While a meeting runs, the prompt box takes notes, and commands start with a slash.
+    private var typing: Bool { state.started && !state.stopping && !state.finished && state.saved == nil }
 
     // MARK: - Sidebar
 
@@ -121,7 +128,7 @@ struct SidebarView {
         // down from the top; in a short window speakers get one row each, then privacy and
         // listening make way.
         let keysTop = height - 8
-        heading("KEYS", y: keysTop)
+        heading(typing ? "COMMANDS" : "KEYS", y: keysTop)
         for (index, key) in keyList.enumerated() {
             let y = keysTop + 1 + index
             canvas.text(4, y, key.key, fg: Palette.accent, bg: bg)
@@ -302,7 +309,9 @@ struct SidebarView {
                 width: w)
         } else if state.askingConsent {
             let text = state.recording == nil ? Self.consentText : Self.recordingConsentText
-            let lines = text.wrapped(to: max(20, w - 6))
+            let lines =
+                text.wrapped(to: max(20, w - 6)).map { ($0, Palette.text) } + [("", Palette.text)]
+                + Self.policyText.wrapped(to: max(20, w - 6)).map { ($0, Palette.dim) }
             panelTop = max(4, panelBottom - lines.count - 3)
             drawConsent(lines, x: x, top: panelTop, width: w)
             hint(
@@ -322,8 +331,21 @@ struct SidebarView {
             drawDraft(
                 draft, lines: Array(lines.suffix(visible)), scrolled: lines.count > visible, x: x, top: panelTop,
                 width: w)
-            let time = ScreenModel.shortTime(draft.start ?? state.elapsed)
-            hint("return adds the note at \(time) · esc cancels", x: x, width: w)
+            if Command.isCommand(draft.text) {
+                let matches = Command.matching(draft.text)
+                if !matches.isEmpty && panelTop - matches.count - 2 > 5 {
+                    panelTop -= matches.count + 2
+                    drawCommands(matches, chosen: Command.chosen(draft.text), x: x, top: panelTop, width: w)
+                }
+                hint(
+                    Command.chosen(draft.text).map { "return runs /\($0.rawValue) · tab completes · esc cancels" }
+                        ?? (matches.isEmpty
+                            ? "no such command · esc clears it" : "keep typing to choose one · tab completes"),
+                    x: x, width: w)
+            } else {
+                let time = ScreenModel.shortTime(draft.start ?? state.elapsed)
+                hint("return adds the note at \(time) · esc cancels", x: x, width: w)
+            }
         } else {
             drawPrompt(x: x, top: panelTop, width: w)
             if !withSidebar { drawKeyHints(x: x, width: w) }
@@ -377,8 +399,8 @@ struct SidebarView {
                     ("k", "synthwave", .skin), ("?", "help", .help),
                 ]
                 : [
-                ("return", "note", .note), ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop", .stop),
-                ("n", "name", .name), ("k", "synthwave", .skin), ("?", "help", .help),
+                ("/stop", "stop", .stop), ("/pause", state.paused ? "resume" : "pause", .pause),
+                ("/name", "name", .name), ("/look", "synthwave", .skin), ("/help", "help", .help),
             ]
         for key in keys {
             let span = key.key.count + 1 + key.label.count
@@ -415,14 +437,15 @@ struct SidebarView {
             canvas.text(
                 x + 5, y,
                 state.recording == nil
-                    ? "Paused. Nothing is being recorded; press space to carry on."
-                    : "Paused. Press space to carry on transcribing.", fg: Palette.amber, limit: w - 7)
-            canvas.region(x, top, w, 3, .resume)
+                    ? "Paused: nothing is being recorded. Type /pause to carry on, or type a note."
+                    : "Paused. Type /pause to carry on transcribing.", fg: Palette.amber, limit: w - 7)
+            canvas.region(x, top, w, 3, .note)
         } else {
             var placeholder =
-                state.recording == nil ? "Press return to add a note" : "\(model.reading) · return adds a note"
-            if let speaker = model.newestUnnamed { placeholder += " · n to name \(speaker.description)" }
-            let stop = "q to stop"
+                state.recording == nil
+                ? "Type a note, or / for commands" : "\(model.reading) · type a note, or / for commands"
+            if let speaker = model.newestUnnamed { placeholder += " · /name to name \(speaker.description)" }
+            let stop = "/stop to finish"
             canvas.put(x + 2, y, ">", fg: Palette.text)
             canvas.text(x + 4, y, placeholder.clipped(w - 8 - stop.count), fg: Palette.quiet)
             canvas.text(x + w - 2 - stop.count, y, stop, fg: Palette.quiet)
@@ -442,15 +465,22 @@ struct SidebarView {
         + "including California, recording without everyone's consent is against the law, and so can be using "
         + "that recording, a transcript of it included."
 
-    /// The question before recording, in place of the prompt box.
-    private mutating func drawConsent(_ lines: [String], x: Int, top: Int, width w: Int) {
+    /// Shown with both questions: the app is for focused sessions, not every meeting.
+    static let policyText =
+        "Your company's policy may prohibit recording routine meetings by default. Mini Meeting Minutes is "
+        + "intended for targeted use: focused sessions where everyone has agreed to a transcript, such as user "
+        + "research or stakeholder interviews. Please consult your risk advisors before using it."
+
+    /// The question before recording, in place of the prompt box: what the law asks, then what
+    /// the app is for (dimmer), then the question.
+    private mutating func drawConsent(_ lines: [(text: String, color: RGB)], x: Int, top: Int, width w: Int) {
         let height = height - 1 - top
         let recording = state.recording != nil
         canvas.box(
             x, top, w, height, border: Palette.accent, fill: Palette.background,
             title: recording ? "Before you transcribe" : "Before you record", titleColor: Palette.text)
         for (index, line) in lines.prefix(height - 4).enumerated() {
-            canvas.text(x + 3, top + 1 + index, line, fg: Palette.text)
+            canvas.text(x + 3, top + 1 + index, line.text, fg: line.color)
         }
         let y = top + height - 2
         let question = recording ? "Did everyone in it know, and agree?" : "Has everyone been told, and agreed?"
@@ -481,6 +511,19 @@ struct SidebarView {
         canvas.region(x, top, w, 3, .open)
     }
 
+    /// The commands that what's typed could be, above the prompt box; Return runs the chosen one.
+    private mutating func drawCommands(_ commands: [Command], chosen: Command?, x: Int, top: Int, width w: Int) {
+        canvas.box(x, top, w, commands.count + 2, border: Palette.rule, fill: Palette.background)
+        for (index, command) in commands.enumerated() {
+            let y = top + 1 + index
+            let picked = command == chosen
+            if picked { canvas.put(x + 2, y, "❯", fg: Palette.accent, bold: true) }
+            canvas.text(x + 4, y, "/" + command.rawValue, fg: picked ? Palette.accent : Palette.text, bold: picked)
+            canvas.text(x + 14, y, command.summary, fg: Palette.dim, limit: w - 16)
+            canvas.region(x, y, w, 1, command.action)
+        }
+    }
+
     /// The prompt box while a note is typed: it grows to four lines, then shows the end.
     private mutating func drawDraft(
         _ draft: LiveState.NoteDraft, lines: [String], scrolled: Bool, x: Int, top: Int, width w: Int
@@ -493,7 +536,9 @@ struct SidebarView {
         let last = lines.last ?? ""
         let cursor = x + 4 + last.count + (draft.text.hasSuffix(" ") && !last.isEmpty ? 1 : 0)
         canvas.put(min(cursor, x + w - 2), top + lines.count, "▍", fg: Palette.accent)
-        if draft.text.isEmpty { canvas.text(x + 5, top + 1, "Type a note…", fg: Palette.quiet, limit: w - 7) }
+        if draft.text.isEmpty {
+            canvas.text(x + 5, top + 1, "Type a note, or / for commands…", fg: Palette.quiet, limit: w - 7)
+        }
     }
 
     private mutating func drawNaming(_ naming: LiveState.Naming, x: Int, top: Int, width w: Int, visible: Int) {
@@ -601,7 +646,7 @@ struct SidebarView {
             draw(line, x: x, y: top + offset, width: w)
         }
         if scroll > 0 {
-            let pill = " ↓ newer lines · f "
+            let pill = " ↓ newer lines · end "
             canvas.text(x + w - pill.count, bottom, pill, fg: Palette.accent, bg: Palette.live)
             canvas.region(x + w - pill.count, bottom, pill.count, 1, .follow)
         }

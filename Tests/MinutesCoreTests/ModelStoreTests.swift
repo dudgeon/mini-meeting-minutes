@@ -37,6 +37,30 @@ import Testing
         try store.prepare()  // idempotent
     }
 
+    @Test func joinsAgainWhenTheModelIsUpdated() throws {
+        let (store, payload) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: store.root) }
+        try store.prepare()
+
+        // An update brings new weights of the same size: new parts, a new checksum.
+        let updated = Data(payload.reversed())
+        let parts = [updated[0..<4_000], updated[4_000..<8_000], updated[8_000...]]
+        for (index, part) in parts.enumerated() {
+            try Data(part).write(to: store.url("model/weights/weight.bin.part-00\(index)"))
+        }
+        func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        let manifestURL = store.root.appendingPathComponent("manifest.json")
+        let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
+            .replacingOccurrences(of: digest(payload), with: digest(updated))
+        try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
+
+        let newer = try ModelStore(root: store.root)
+        #expect(!newer.verify().isEmpty)  // the old joined file no longer matches...
+        try newer.prepare()  // ...so it's joined again
+        #expect(try Data(contentsOf: newer.url("model/weights/weight.bin")) == updated)
+        #expect(newer.verify().isEmpty)
+    }
+
     @Test func rejectsCorruptParts() throws {
         let (store, _) = try makeStore(corruptPart: true)
         defer { try? FileManager.default.removeItem(at: store.root) }
