@@ -96,6 +96,9 @@ crashes or is killed, so there's never a leftover file to clean up.
 
 ## The written minutes
 
+- **The clipboard holds only the path.** When the minutes are saved, their file path is copied to
+  the clipboard, never their text. Clipboard managers and Universal Clipboard can pass the
+  clipboard on, so the minutes themselves never go there.
 - **Updated as it goes.** The minutes file is rewritten each time a stretch of speech is
   attributed and whenever you add a note, so a crash loses at most the last half-minute or so.
 - **Finished on exit.** Closing the window or quitting Terminal finishes the meeting the same way

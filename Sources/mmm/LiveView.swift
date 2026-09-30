@@ -52,6 +52,8 @@ final class LiveState: Sendable {
         let path: String
         let turns: Int
         let speakers: Int
+        /// The full path went on the clipboard, to paste wherever it's wanted next.
+        var copied = false
     }
 
     struct Snapshot: Sendable {

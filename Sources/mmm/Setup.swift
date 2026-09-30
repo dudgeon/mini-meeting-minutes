@@ -73,7 +73,7 @@ enum Setup {
     }
 
     /// After a recording: says where the minutes are and offers to open them.
-    static func finished(_ url: URL, turns: Int, speakers: Int, offerToOpen: Bool = true) {
+    static func finished(_ url: URL, turns: Int, speakers: Int, copied: Bool = false, offerToOpen: Bool = true) {
         let minutesFolder = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/Minutes").path
         let place =
@@ -82,6 +82,9 @@ enum Setup {
         print("")
         print(Style.green("✓ Saved your minutes") + "  " + Style.dim("(\(turns) turns, \(speakers) speakers)"))
         print("  " + place)
+        if copied {
+            print(Style.dim("  Its full path is on the clipboard, ready to paste into an AI assistant or anywhere else."))
+        }
         guard offerToOpen, Terminal.isInteractive else { return }
         if ask("\nPress Return to open them, or close this window.") != nil {
             openMinutes(url.path)
@@ -100,6 +103,25 @@ enum Setup {
     }
 
     /// Opens minutes in TextEdit, which is on every Mac; they're plain text with light markdown.
+    /// Puts text on the clipboard. Returns whether that worked (over SSH there may be none).
+    @discardableResult
+    static func copyToClipboard(_ text: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pbcopy")
+        // pbcopy reads its input in the locale's encoding: UTF-8, so accented names survive.
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"]) { _, utf8 in utf8 }
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return false }
+        input.fileHandleForWriting.write(Data(text.utf8))
+        try? input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     static func openMinutes(_ path: String) {
         run("/usr/bin/open", ["-e", path])
     }

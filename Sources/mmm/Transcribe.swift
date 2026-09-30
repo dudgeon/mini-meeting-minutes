@@ -81,6 +81,7 @@ struct Transcribe: AsyncParsableCommand {
         if !minutes.noNames { document.names = promptForNames(document) }
         let url = MinutesOptions.unused(minutes.outputURL(startedAt: startDate))
         try document.write(to: url)
-        Setup.finished(url, turns: turns.count, speakers: document.speakers.count)
+        let copied = Terminal.isInteractive && Setup.copyToClipboard(url.path)
+        Setup.finished(url, turns: turns.count, speakers: document.speakers.count, copied: copied)
     }
 }

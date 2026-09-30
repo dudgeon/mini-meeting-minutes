@@ -95,6 +95,8 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 
 - **Plain markdown files** in **Documents › Minutes**, named by date, time and title. They open in
   TextEdit, Notes, Obsidian, VS Code, or anything else that reads text.
+- **The path, ready to paste.** When the minutes are saved, their full path goes on the clipboard,
+  ready to hand to an AI assistant or anyone else. **C** copies it again.
 - **A short header:** title, date, length, which audio was recorded, the speakers, what was
   redacted, and when you confirmed that everyone agreed.
 - **Paragraphs by speaker, with timestamps**, and your notes in place as quotes.

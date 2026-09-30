@@ -217,7 +217,8 @@ struct SynthwaveView {
             let room = width - 8 - title.count
             let path =
                 state.saved != nil
-                ? "✓ SAVED → " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 10, 0))
+                ? (state.saved?.copied == true ? "✓ SAVED, PATH COPIED → " : "✓ SAVED → ")
+                    + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 23, 0))
                 : state.started
                 ? "→ " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 2, 0))
                 : "A NEW FILE, ONCE YOU START"
@@ -308,7 +309,7 @@ struct SynthwaveView {
                 + [("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer), ("/HELP", "HELP", .help)]
             : state.saved != nil
             ? [("SPACE", "NEW", .newMeeting), ("O", "OPEN FILE", .openRecording), ("RETURN", "MINUTES", .open),
-               ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
+               ("C", "COPY PATH", .copyPath), ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
             : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
             : [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording)]

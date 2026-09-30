@@ -181,9 +181,12 @@ import Testing
 
         var saved = Self.snapshot()
         saved.finished = true
-        saved.saved = LiveState.Saved(path: "/Users/someone/Documents/Minutes/x.md", turns: 2, speakers: 2)
+        saved.saved = LiveState.Saved(
+            path: "/Users/someone/Documents/Minutes/x.md", turns: 2, speakers: 2, copied: true)
         let done = Self.render(saved, look, 120, 42)
         #expect(Self.text(done).lowercased().contains("saved"))
+        #expect(Self.text(done).lowercased().contains("path copied"))
+        #expect(Set(done.regions.map { "\($0.action)" }).contains("copyPath"))
         #expect(Self.text(done).contains("Good morning everyone."))
         #expect(Set(done.regions.map { "\($0.action)" }).isSuperset(of: ["newMeeting", "open", "reveal", "quit"]))
     }
@@ -304,20 +307,26 @@ final class Calls<Value: Sendable>: Sendable {
     let declined = Calls<Bool>()
     /// Microphones chosen: nil means the Mac's default.
     let microphones = Calls<String?>()
+    /// What went on the clipboard (a stand-in: tests leave the real one alone).
+    let clipboard = Calls<String>()
 
     init() {
         let live = live
         let save: AsyncStream<Void>.Continuation
         let stop: AsyncStream<Void>.Continuation
         let choose: AsyncStream<Record.Next>.Continuation
-        let (opened, declined, microphones) = (opened, declined, microphones)
+        let (opened, declined, microphones, clipboard) = (opened, declined, microphones, clipboard)
         (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         (stops, stop) = AsyncStream.makeStream(of: Void.self)
         (choices, choose) = AsyncStream.makeStream(of: Record.Next.self)
         controls = LiveScreen.Controls(
             paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop, save: save, choose: choose,
             openRecording: { opened.record($0) }, declined: { declined.record(true) },
-            chooseMicrophone: { microphones.record($0) })
+            chooseMicrophone: { microphones.record($0) },
+            copyPath: { text in
+                clipboard.record(text)
+                return true
+            })
         naming = AsyncStream.makeStream(of: Void.self).continuation
     }
 
@@ -434,6 +443,8 @@ final class Calls<Value: Sendable>: Sendable {
 
     @Test func theSavedScreenStartsAnotherMeetingOrQuits() async throws {
         live.update { $0.saved = LiveState.Saved(path: "/tmp/minutes.md", turns: 3, speakers: 2) }
+        press(.char("c"))  // the path, on the clipboard again
+        #expect(clipboard.all == ["/tmp/minutes.md"] && live.snapshot.saved?.copied == true)
         press(.char(" "), .char("q"))
         var answers: [Record.Next] = []
         for await choice in choices {

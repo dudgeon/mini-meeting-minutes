@@ -119,9 +119,11 @@ struct Record: AsyncParsableCommand {
         }
         terminal?.leaveFullScreen()
         if saved.isEmpty { Console.note("Nothing was recorded.") }
-        for minutes in saved {
+        for (index, minutes) in saved.enumerated() {
+            // Only the last path saved is still on the clipboard.
             Setup.finished(
-                URL(fileURLWithPath: minutes.path), turns: minutes.turns, speakers: minutes.speakers, offerToOpen: false)
+                URL(fileURLWithPath: minutes.path), turns: minutes.turns, speakers: minutes.speakers,
+                copied: minutes.copied && index == saved.count - 1, offerToOpen: false)
         }
     }
 
@@ -463,7 +465,7 @@ struct Record: AsyncParsableCommand {
             terminal: terminal, live: live, clock: recording == nil ? clock : nil, naming: (namesDone, finishNaming),
             controls: LiveScreen.Controls(
                 paused: paused, begin: begin, stop: stop, save: save, choose: choose, openRecording: openRecording,
-                declined: declined, chooseMicrophone: chooseMicrophone))
+                declined: declined, chooseMicrophone: chooseMicrophone, copyPath: Setup.copyToClipboard))
         if screen == nil {
             Console.note(
                 recording.map {
@@ -528,7 +530,11 @@ struct Record: AsyncParsableCommand {
             recording: snapshot.recording.map { MinutesDocument.Recording(name: $0.name, length: $0.length) })
         if screen == nil && !unattended && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
-        let saved = LiveState.Saved(path: outputURL.path, turns: turns.count, speakers: document.speakers.count)
+        // The full path goes on the clipboard, since what's next is often handing the minutes to
+        // someone, or to an AI assistant. Only with a screen: scripts' clipboards are left alone.
+        let copied = terminal != nil && Setup.copyToClipboard(outputURL.path)
+        let saved = LiveState.Saved(
+            path: outputURL.path, turns: turns.count, speakers: document.speakers.count, copied: copied)
         guard let screen else { return Meeting(saved: saved, look: live.snapshot.look) }
 
         // The final minutes stay on screen, with what to do next, unless the window has closed.
@@ -777,6 +783,8 @@ struct LiveScreen {
         let declined: @Sendable () -> Void
         /// Use this microphone (nil: the Mac's default) from now on.
         let chooseMicrophone: @Sendable (String?) -> Void
+        /// Puts text on the clipboard, and says whether that worked.
+        let copyPath: @Sendable (String) -> Bool
     }
 
     let terminal: Terminal
@@ -959,7 +967,7 @@ struct LiveScreen {
             } else if snapshot.recording != nil {
                 live.update { $0.notice = "Transcribing a recording uses no microphone." }
             }
-        case .microphone, .consent, .decline, .newMeeting, .open, .reveal, .quit: break
+        case .microphone, .consent, .decline, .newMeeting, .open, .reveal, .copyPath, .quit: break
         }
     }
 
@@ -1035,7 +1043,7 @@ struct LiveScreen {
     }
 
     /// The saved screen: Space for another meeting, O (or a dropped file) for a recording, Return
-    /// opens the minutes, R shows them in Finder, Q or Escape quits.
+    /// opens the minutes, R shows them in Finder, C copies their path again, Q or Escape quits.
     private static func handleSaved(
         _ key: Key, _ saved: LiveState.Saved, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls
     ) {
@@ -1046,6 +1054,7 @@ struct LiveScreen {
             case " ": action = .newMeeting
             case "o": action = .openRecording
             case "r": action = .reveal
+            case "c": action = .copyPath
             case "q": action = .quit
             case "k": action = .skin
             case "f": action = .follow
@@ -1069,6 +1078,13 @@ struct LiveScreen {
         case .openRecording: controls.openRecording(nil)
         case .open: Setup.openMinutes(saved.path)
         case .reveal: Setup.showInFinder(saved.path)
+        case .copyPath:
+            if controls.copyPath(saved.path) {
+                live.update {
+                    $0.saved?.copied = true
+                    $0.notice = "Copied the path of the minutes to the clipboard."
+                }
+            }
         case .skin: live.update { $0.look = $0.look.next }
         case .follow: live.update { $0.scroll = 0 }
         default: break

@@ -38,8 +38,9 @@ mmm transcribe --room mic.m4a --remote call.m4a   # separate room and call recor
      meeting.
    - The app then asks you to name each speaker, showing something they said. **Return** moves on,
      and **Esc** finishes.
-5. **Saved.** The finished minutes stay on screen:
+5. **Saved.** The finished minutes stay on screen, and their full path is on the clipboard:
    - **Return** opens them;
+   - **C** copies the path again;
    - **R** shows them in Finder;
    - **Space** starts another meeting;
    - **O** transcribes a recording instead;
@@ -81,7 +82,7 @@ keys* in System Settings › Keyboard › Keyboard Shortcuts › Function Keys.
 | **O** | Transcribe a recording instead. Dragging one onto the window does the same |
 | **M** | Choose the microphone, if there's more than one: the Mac's default, or a particular one. The choice is remembered for next time |
 | **Q** | Quit |
-| **Return** | On the saved screen: open the minutes (**R** shows them in Finder) |
+| **Return** | On the saved screen: open the minutes (**R** shows them in Finder, **C** copies their path again) |
 | **K**, **V**, **?** | Switch the look, the visualizer, and show all the keys |
 
 The keys and commands listed on screen are clickable too. Because the screen takes mouse clicks, hold

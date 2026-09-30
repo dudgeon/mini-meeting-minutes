@@ -77,8 +77,8 @@ struct SidebarView {
         if state.saved != nil {
             return [
                 ("space", "new recording", .newMeeting), ("o", "open a recording", .openRecording),
-                ("return", "open minutes", .open), ("r", "show in Finder", .reveal), ("k", "synthwave", .skin),
-                ("q", "quit", .quit),
+                ("return", "open minutes", .open), ("c", "copy the path", .copyPath), ("r", "show in Finder", .reveal),
+                ("k", "synthwave", .skin), ("q", "quit", .quit),
             ]
         }
         if state.askingConsent {
@@ -317,9 +317,7 @@ struct SidebarView {
         } else if let saved = state.saved {
             panelTop = panelBottom - 3
             drawSaved(saved, x: x, top: panelTop, width: w)
-            hint(
-                "space new recording · o open a recording · return open the minutes · r show in Finder · q quit", x: x,
-                width: w)
+            hint("return open the minutes · c copy the path · space new recording · q quit", x: x, width: w)
         } else if state.askingConsent {
             let text = state.recording == nil ? Self.consentText : Self.recordingConsentText
             let lines =
@@ -514,7 +512,9 @@ struct SidebarView {
 
     /// Where the minutes went, in place of the prompt box, once they're saved.
     private mutating func drawSaved(_ saved: LiveState.Saved, x: Int, top: Int, width w: Int) {
-        canvas.box(x, top, w, 3, border: Palette.green, fill: Palette.background, title: "Saved", titleColor: Palette.text)
+        canvas.box(
+            x, top, w, 3, border: Palette.green, fill: Palette.background,
+            title: saved.copied ? "Saved · path copied to the clipboard" : "Saved", titleColor: Palette.text)
         let file = URL(fileURLWithPath: saved.path)
         let place = file.deletingLastPathComponent().lastPathComponent + " › " + file.lastPathComponent
         let counts = "\(saved.turns) turns · \(saved.speakers) speakers"
