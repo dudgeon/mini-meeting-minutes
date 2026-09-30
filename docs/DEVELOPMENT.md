@@ -67,6 +67,28 @@ python3 -m venv /tmp/demo-venv && /tmp/demo-venv/bin/pip install pillow
 /tmp/demo-venv/bin/python scripts/record_demo.py --minutes /tmp/out       # also keep the minutes
 ```
 
+## The explainer video
+
+`scripts/explainer/make.py` makes a one-minute 1080p explainer: two narrators (the Samantha and
+Daniel voices) take turns introducing the app while the real app transcribes them.
+
+1. `narration.py` speaks the script into one track.
+2. `capture.py` replays that track through `mmm` as the room microphone, in a pseudo-terminal. It
+   presses keys on cue (consent, naming, a note, stop) and timestamps everything the app draws.
+3. `compose.py` flies a 3D camera over the screen, drawn at 3× by `terminal_render.py`. It adds a
+   title, feature captions, the keys pressed, the saved minutes and an end card.
+
+Every shot is anchored to a narration line, a key press, or something the app did, such as telling
+the speakers apart or saving. A new capture therefore lines up by itself. The synthetic speech lives
+in a temporary folder that's deleted afterwards.
+
+```sh
+python3 -m venv /tmp/explainer-venv && /tmp/explainer-venv/bin/pip install pillow numpy imageio-ffmpeg
+/tmp/explainer-venv/bin/python scripts/explainer/make.py      # ~/Movies/Mini Meeting Minutes explainer.mp4
+/tmp/explainer-venv/bin/python scripts/explainer/make.py --work /tmp/explainer     # keep the capture…
+/tmp/explainer-venv/bin/python scripts/explainer/make.py --work /tmp/explainer --reuse --still 21.9   # …to iterate
+```
+
 ## Privacy guards in the tests
 
 - **`NoAudioOnDiskTests`** fails if the sources ever write audio files or use FluidAudio's
@@ -89,7 +111,7 @@ python3 -m venv /tmp/demo-venv && /tmp/demo-venv/bin/pip install pillow
 | `Sources/mmm/Screen/` | The screen: the sidebar and synthwave looks, drawing, visualizers and input |
 | `Models/` | Vendored Core ML models; see [Models/README.md](../Models/README.md) |
 | `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (the end-to-end check), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), and `record_demo.py` with `terminal_render.py` (the README animation) |
+| `scripts/` | `e2e_check.py` (the end-to-end check), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), and `explainer/` (the explainer video) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.
