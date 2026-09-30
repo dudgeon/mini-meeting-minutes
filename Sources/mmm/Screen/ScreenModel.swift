@@ -212,6 +212,7 @@ struct ScreenModel {
             ("type", "during a meeting, a note: return adds it where you started typing, esc drops it"),
             ("/stop", "stop and save the minutes (ctrl-c does too)"),
             ("/name", "name the speakers"),
+            ("/mic", "choose the microphone (m before a meeting)"),
             ("/look", "switch to \(other)"),
             ("/visual", "visualizer: spectrum, waveform or off"),
             ("tab", "finish typing a command's name"),

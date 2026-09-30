@@ -55,6 +55,8 @@ enum ScreenAction: Sendable, Equatable {
     case newMeeting, open, reveal, quit
     /// Before recording or after saving: transcribe a recording instead, chosen in the Open window.
     case openRecording
+    /// Open the list of microphones; in it, choose one by its place in the list.
+    case chooseMicrophone, microphone(Int)
 }
 
 /// An off-screen grid of cells that views draw into; `Screen` puts it on the terminal.

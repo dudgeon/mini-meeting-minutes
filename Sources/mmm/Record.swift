@@ -67,6 +67,13 @@ struct Record: AsyncParsableCommand {
         var look = skin
         var saved: [LiveState.Saved] = []
         var notice: String?
+        // The microphone: --mic-device, else the one chosen last time, else the Mac's default.
+        let remembered = Settings.microphone
+        if micDevice == nil, let remembered, !AudioDevices.inputs().contains(where: { $0.uid == remembered.uid }) {
+            notice = "The microphone you chose, \(remembered.name), isn't connected, so the Mac's default is used "
+                + "until it is. Press M to choose another."
+        }
+        let microphones = MicrophoneChoice(micDevice ?? remembered?.uid)
         do {
             meetings: while true {
                 let meeting: Meeting
@@ -80,7 +87,7 @@ struct Record: AsyncParsableCommand {
                     channels = nil
                     meeting = try await recordMeeting(
                         models: models, redaction: redaction, keep: keep, requested: requested, channels: available,
-                        recording: nil, terminal: terminal, look: look, notice: notice)
+                        microphones: microphones, recording: nil, terminal: terminal, look: look, notice: notice)
                 case .recording(let url):
                     let reader: AudioFileReader
                     do {
@@ -97,8 +104,8 @@ struct Record: AsyncParsableCommand {
                     }
                     meeting = try await recordMeeting(
                         models: models, redaction: redaction, keep: keep, requested: [.room], channels: [.room],
-                        recording: RecordingFile(url: url, reader: reader), terminal: terminal, look: look,
-                        notice: nil)
+                        microphones: microphones, recording: RecordingFile(url: url, reader: reader),
+                        terminal: terminal, look: look, notice: nil)
                 }
                 notice = nil
                 if let minutes = meeting.saved { saved.append(minutes) }
@@ -150,7 +157,8 @@ struct Record: AsyncParsableCommand {
     /// meeting but as fast as the Mac allows, once it's confirmed that everyone in it agreed.
     private func recordMeeting(
         models: LoadedModels, redaction: Set<PIICategory>, keep: [String], requested: Set<Channel>,
-        channels: Set<Channel>, recording: RecordingFile?, terminal: Terminal?, look: Look, notice: String?
+        channels: Set<Channel>, microphones: MicrophoneChoice, recording: RecordingFile?, terminal: Terminal?,
+        look: Look, notice: String?
     ) async throws -> Meeting {
         // With no microphone yet, the room channel is set up anyway, and one connected later is used.
         let awaitingMicrophone = recording == nil && requested.contains(.room) && !channels.contains(.room)
@@ -177,6 +185,8 @@ struct Record: AsyncParsableCommand {
             $0.awaitingMicrophone = awaitingMicrophone
             $0.look = look
             $0.notice = notice
+            $0.microphoneChoosable = recording == nil && !replaying && requested.contains(.room)
+            $0.microphoneChoice = microphones.current
             if let recording {
                 $0.recording = LiveState.Recording(name: recording.name, length: recording.reader.duration)
                 $0.sources = [.room: recording.name]
@@ -251,23 +261,31 @@ struct Record: AsyncParsableCommand {
                 if let time, time >= 0, !paused.isPaused { feedInput.yield((channel, chunk)) }
             }
         }
-        let micDevice = micDevice
-        func makeMicrophone() -> MicrophoneCapture {
+        let roomSamples = deliver(.room)
+        let makeMicrophone: @Sendable () -> MicrophoneCapture = {
             var configuration = MicrophoneCapture.Configuration()
-            configuration.inputDeviceUID = micDevice
+            configuration.inputDeviceUID = microphones.current
             return MicrophoneCapture(
                 configuration: configuration,
                 onEvent: { event in
                     switch event {
                     case .started(_, _, let device), .restarted(_, _, let device):
-                        live.update { $0.sources[.room] = device ?? "microphone" }
+                        let name = device ?? "microphone"
+                        live.update { state in
+                            // Every microphone a meeting used goes in its minutes, in order.
+                            if state.started, let used = state.sources[.room], !used.hasSuffix(name) {
+                                state.sources[.room] = used + ", then " + name
+                            } else if !state.started || state.sources[.room] == nil {
+                                state.sources[.room] = name
+                            }
+                        }
                     case .restarting(let reason):
                         live.warn("Microphone restarting: \(reason)")
                     case .failed(let error):
                         live.warn("Microphone stopped: \(error)")
                     }
                 },
-                onSamples: deliver(.room))
+                onSamples: roomSamples)
         }
 
         let microphone = MicrophoneSlot()
@@ -418,11 +436,34 @@ struct Record: AsyncParsableCommand {
             for source in signals { source.cancel() }
             for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_DFL) }
         }
+        // Another microphone, chosen from the list: used from now on, in this meeting and the next,
+        // and remembered for next time. The one in use stops first, since two can clash over a device.
+        let chooseMicrophone: @Sendable (String?) -> Void = { uid in
+            microphones.set(uid)
+            let device = AudioDevices.inputs().first { $0.uid == uid }
+            Settings.microphone = uid.flatMap { uid in device.map { (uid, $0.name) } }
+            live.update {
+                $0.microphoneChoice = uid
+                $0.notice = nil
+            }
+            let snapshot = live.snapshot
+            guard snapshot.microphoneChoosable, !snapshot.stopping, !snapshot.awaitingMicrophone else { return }
+            Task {
+                microphone.take()?.stop()
+                let capture = makeMicrophone()
+                do {
+                    try await capture.start()
+                    _ = microphone.put(capture)  // stopped at once if the meeting ended meanwhile
+                } catch {
+                    live.warn("Couldn't switch to that microphone (\(error)). Choose another with M or /mic.")
+                }
+            }
+        }
         var screen = LiveScreen.start(
             terminal: terminal, live: live, clock: recording == nil ? clock : nil, naming: (namesDone, finishNaming),
             controls: LiveScreen.Controls(
                 paused: paused, begin: begin, stop: stop, save: save, choose: choose, openRecording: openRecording,
-                declined: declined))
+                declined: declined, chooseMicrophone: chooseMicrophone))
         if screen == nil {
             Console.note(
                 recording.map {
@@ -667,6 +708,14 @@ final class MicrophoneSlot: Sendable {
         }
         capture?.stop()
     }
+
+    /// Takes the capture out, to replace it with another microphone.
+    func take() -> MicrophoneCapture? {
+        state.withLock { state in
+            defer { state.capture = nil }
+            return state.capture
+        }
+    }
 }
 
 /// A value one task leaves for another to pick up.
@@ -726,6 +775,8 @@ struct LiveScreen {
         let openRecording: @Sendable (URL?) -> Void
         /// Not everyone in the recording agreed: go back to the ready screen.
         let declined: @Sendable () -> Void
+        /// Use this microphone (nil: the Mac's default) from now on.
+        let chooseMicrophone: @Sendable (String?) -> Void
     }
 
     let terminal: Terminal
@@ -806,6 +857,10 @@ struct LiveScreen {
             if editNames(key, live: live) { finishNaming.yield() }
             return
         }
+        if snapshot.microphones != nil {
+            editMicrophones(key, live: live, controls: controls)
+            return
+        }
         if let saved = snapshot.saved {
             handleSaved(key, saved, snapshot: snapshot, live: live, controls: controls)
             return
@@ -848,6 +903,7 @@ struct LiveScreen {
             case "?", "h": action = .help
             case "f": action = .follow
             case "o": action = .openRecording
+            case "m": action = .chooseMicrophone
             default: break
             }
         case .enter: action = .note
@@ -897,8 +953,48 @@ struct LiveScreen {
         case .follow: live.update { $0.scroll = 0 }
         case .openRecording:
             if !snapshot.started && snapshot.recording == nil && !busy { controls.openRecording(nil) }
-        case .consent, .decline, .newMeeting, .open, .reveal, .quit: break
+        case .chooseMicrophone:
+            if snapshot.microphoneChoosable && !busy {
+                live.update { $0.microphones = .current(chosen: $0.microphoneChoice) }
+            } else if snapshot.recording != nil {
+                live.update { $0.notice = "Transcribing a recording uses no microphone." }
+            }
+        case .microphone, .consent, .decline, .newMeeting, .open, .reveal, .quit: break
         }
+    }
+
+    /// The list of microphones: ↑↓ or Tab move, Return (or its number, or a click) chooses one,
+    /// Escape keeps the one in use.
+    private static func editMicrophones(_ key: Key, live: LiveState, controls: Controls) {
+        var chosen: LiveState.MicrophonePicker.Option?
+        live.update { state in
+            guard var picker = state.microphones else { return }
+            switch key {
+            case .up:
+                picker.selected = max(0, picker.selected - 1)
+            case .down, .tab:
+                picker.selected = min(picker.options.count - 1, picker.selected + 1)
+            case .enter:
+                chosen = picker.options[picker.selected]
+            case .char(let char):
+                if let number = char.wholeNumberValue, picker.options.indices.contains(number - 1) {
+                    chosen = picker.options[number - 1]
+                }
+            case .click(let x, let y):
+                if case .microphone(let index)? = state.regions.last(where: { $0.contains(x, y) })?.action,
+                    picker.options.indices.contains(index)
+                {
+                    chosen = picker.options[index]
+                }
+            case .escape:
+                state.microphones = nil
+                return
+            default:
+                break
+            }
+            state.microphones = chosen == nil ? picker : nil
+        }
+        if let chosen { controls.chooseMicrophone(chosen.uid) }
     }
 
     /// Text pasted before recording, or on the saved screen: a recording dropped on the window is

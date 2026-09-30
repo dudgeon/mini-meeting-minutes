@@ -37,6 +37,10 @@ keeps your meeting private, see [Privacy and security](PRIVACY-AND-SECURITY.md).
 - **For focused sessions.** The confirmation also says what the app is meant for: sessions where
   everyone has agreed to a transcript, such as user research or stakeholder interviews. It adds
   that company policy may not allow recording routine meetings.
+- **Choose the microphone** with **M** before a meeting, or **/mic** during one. The list has the
+  Mac's default and each microphone connected. The sidebar shows the one in use, recording carries
+  on through a switch, and the choice is remembered for next time. The minutes list every
+  microphone a meeting used.
 - **Pause and resume** with **Space**, or **F8** (the ⏯ key, with fn). Paused audio is dropped,
   not held for later.
 - **Stop** with **/stop**, **Ctrl-C** or by closing the window. The minutes are saved either way.

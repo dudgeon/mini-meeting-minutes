@@ -59,6 +59,7 @@ struct SynthwaveView {
         if state.help { view.drawHelp() }
         if state.askingConsent { view.drawConsent() }
         if let naming = state.naming { view.drawNaming(naming) }
+        if let picker = state.microphones { view.drawMicrophones(picker) }
         return (view.canvas, view.maxScroll)
     }
 
@@ -290,6 +291,11 @@ struct SynthwaveView {
                 fg: Palette.dim, limit: width - 4)
             return
         }
+        if state.microphones != nil {
+            canvas.text(2, y, "↑↓ MOVE · RETURN OR A NUMBER CHOOSES · ESC KEEPS THE ONE IN USE", fg: Palette.dim,
+                limit: width - 4)
+            return
+        }
         if state.choosingRecording {
             canvas.text(2, y, "CHOOSE A RECORDING IN THE WINDOW THAT OPENED…", fg: blink ? Palette.yellow : Palette.dim,
                 limit: width - 4)
@@ -298,18 +304,21 @@ struct SynthwaveView {
         var keys: [(String, String, ScreenAction)] =
             state.started && !state.stopping && !state.finished && state.saved == nil
             ? [("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("/STOP", "SAVE", .stop),
-               ("/NAME", "NAME", .name), ("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer),
-               ("/HELP", "HELP", .help)]
+               ("/NAME", "NAME", .name)] + (state.microphoneChoosable ? [("/MIC", "MIC", .chooseMicrophone)] : [])
+                + [("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer), ("/HELP", "HELP", .help)]
             : state.saved != nil
             ? [("SPACE", "NEW", .newMeeting), ("O", "OPEN FILE", .openRecording), ("RETURN", "MINUTES", .open),
                ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
             : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
-            : [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording), ("Q", "QUIT", .stop),
-               ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help)]
+            : [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording)]
+                + (state.microphoneChoosable ? [("M", "MIC", .chooseMicrophone)] : [])
+                + [("Q", "QUIT", .stop), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help)]
         // In a narrow window the visualizer key goes first, then help; the way back to the sidebar stays.
         func fits() -> Bool { keys.reduce(2) { $0 + $1.0.count + $1.1.count + 4 } - 3 <= width - 2 }
-        for dropped in ["V", "/VISUAL", "?", "/HELP", "R", "O"] where !fits() { keys.removeAll { $0.0 == dropped } }
+        for dropped in ["V", "/VISUAL", "?", "/HELP", "R", "M", "/MIC", "O"] where !fits() {
+            keys.removeAll { $0.0 == dropped }
+        }
         var x = 2
         if state.started && !state.stopping && !state.finished && state.saved == nil {
             // During a meeting, typing takes a note.
@@ -405,6 +414,28 @@ struct SynthwaveView {
         canvas.text(
             x + 3, y + visible + 5, "Giving two speakers the same name combines them.", fg: Palette.dim, bg: bg,
             limit: w - 5)
+    }
+
+    /// The microphones to choose from, numbered, with the one in use marked.
+    private mutating func drawMicrophones(_ picker: LiveState.MicrophonePicker) {
+        let bg = Palette.strip
+        let w = min(width - 2, 72)
+        let visible = min(picker.options.count, max(1, height - 10))
+        let (x, y) = dialog("CHOOSE A MICROPHONE", width: w, height: visible + 5)
+        let first = max(0, min(picker.selected - visible / 2, picker.options.count - visible))
+        for row in 0..<visible where picker.options.indices.contains(first + row) {
+            let index = first + row
+            let option = picker.options[index]
+            let selected = index == picker.selected
+            let ry = y + 2 + row
+            if selected { canvas.put(x + 2, ry, "▸", fg: Palette.yellow, bg: bg, bold: true) }
+            canvas.text(x + 4, ry, "\(index + 1)", fg: Palette.dim, bg: bg)
+            canvas.text(
+                x + 7, ry, option.name.uppercased(), fg: selected ? Palette.cyan : Palette.text, bg: bg, bold: selected,
+                limit: w - 19)
+            if option.uid == state.microphoneChoice { canvas.text(x + w - 10, ry, "IN USE", fg: Palette.pink, bg: bg) }
+            canvas.region(x, ry, w, 1, .microphone(index))
+        }
     }
 
     /// The question before recording, or before transcribing a recording.

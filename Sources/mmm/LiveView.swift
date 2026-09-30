@@ -26,6 +26,27 @@ final class LiveState: Sendable {
         var speed: Double?
     }
 
+    /// The list of microphones to choose from, while it's open.
+    struct MicrophonePicker: Sendable {
+        struct Option: Sendable, Equatable {
+            /// Nil follows the Mac's default input, whatever it is.
+            let uid: String?
+            let name: String
+        }
+
+        var options: [Option]
+        var selected = 0
+
+        /// The Mac's default first, then each microphone connected now.
+        static func current(chosen: String?) -> MicrophonePicker {
+            let devices = AudioDevices.inputs()
+            let current = devices.first { $0.isDefault }
+            let fallback = current.map { "The Mac's default (\($0.name))" } ?? "The Mac's default"
+            let options = [Option(uid: nil, name: fallback)] + devices.map { Option(uid: $0.uid, name: $0.name) }
+            return MicrophonePicker(options: options, selected: options.firstIndex { $0.uid == chosen } ?? 0)
+        }
+    }
+
     /// Minutes saved at the end of a meeting, shown until the next one or quitting.
     struct Saved: Sendable {
         let path: String
@@ -51,6 +72,12 @@ final class LiveState: Sendable {
         var recording: Recording?
         /// The Mac's Open window is up, to choose a recording.
         var choosingRecording = false
+        /// A microphone can be chosen: a live meeting that listens to the room.
+        var microphoneChoosable = false
+        /// The microphone chosen, by Core Audio ID; nil follows the Mac's default input.
+        var microphoneChoice: String?
+        /// The list of microphones, while it's open.
+        var microphones: MicrophonePicker?
         /// No microphone was found at the start; one connected later will be used.
         var awaitingMicrophone = false
         var levels: [Channel: Float] = [:]

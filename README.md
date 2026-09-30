@@ -99,8 +99,10 @@ never copied or changed.
 - **People on the call are missing.** Open **System Settings › Privacy & Security › Screen &
   System Audio Recording** and turn on **Terminal** under **System Audio Recording Only**. Then
   quit Terminal (**⌘ Q**) and start again.
-- **People in the room are missing.** Open **System Settings › Privacy & Security › Microphone**
-  and turn on **Terminal**.
+- **People in the room are missing.** Check which microphone it's using: its name is under **mic**
+  in the sidebar. Press **M** before you start (or type **/mic** during a meeting) to choose
+  another, and it's remembered for next time. If none is heard, open **System Settings › Privacy &
+  Security › Microphone** and turn on **Terminal**.
 - **One person appears as two speakers.** Give both the same name when you stop, and they're
   combined.
 

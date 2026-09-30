@@ -93,17 +93,17 @@ struct SidebarView {
         }
         if state.finished || state.stopping { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         if !state.started {
-            return [
-                ("space", "start recording", .pause), ("o", "open a recording", .openRecording), ("q", "quit", .stop),
-                ("k", "synthwave", .skin), ("?", "all shortcuts", .help),
-            ]
+            return [("space", "start recording", .pause), ("o", "open a recording", .openRecording)]
+                + (state.microphoneChoosable ? [("m", "microphone", .chooseMicrophone)] : [])
+                + [("q", "quit", .stop), ("k", "synthwave", .skin), ("?", "all shortcuts", .help)]
         }
         // During a meeting, typing takes notes, so commands start with a slash. Space still pauses:
         // a note never starts with one.
         return [
             ("space", state.paused ? "resume" : "pause", .pause), ("/stop", "stop and save", .stop),
-            ("/name", "name speakers", .name), ("/look", "synthwave", .skin), ("/help", "all commands", .help),
-        ]
+            ("/name", "name speakers", .name),
+        ] + (state.microphoneChoosable ? [("/mic", "microphone", .chooseMicrophone)] : [])
+            + [("/look", "synthwave", .skin), ("/help", "all commands", .help)]
     }
 
     // MARK: - Sidebar
@@ -137,11 +137,13 @@ struct SidebarView {
         let top = 7
         let available = keysTop - 1 - top
         let privacyRows = state.channels.count == 2 || state.recording != nil ? 5 : 4
+        // A heading, a row per source (and one for the microphone's name), then a gap.
+        let listeningRows = state.recording != nil ? 3 : state.microphoneChoosable ? 5 : 4
         let speakers = model.talk.count
         var perSpeaker = 2
         var listening = true
         var privacy = true
-        func others() -> Int { (listening ? 4 : 0) + (privacy ? privacyRows + 1 : 0) }
+        func others() -> Int { (listening ? listeningRows : 0) + (privacy ? privacyRows + 1 : 0) }
         func needed() -> Int { 1 + max(1, speakers * perSpeaker) + others() }
         if needed() > available { perSpeaker = 1 }
         if needed() > available { privacy = false }
@@ -151,7 +153,7 @@ struct SidebarView {
         var y = top + 1 + rows + 1
         if listening {
             drawListening(top: y, width: w)
-            y += 4
+            y += listeningRows
         }
         if privacy { drawPrivacy(top: y, width: w) }
     }
@@ -210,12 +212,20 @@ struct SidebarView {
         heading("LISTENING TO", y: top)
         let rows: [(Channel, String)] =
             state.recording == nil ? [(.room, "mic"), (.remote, "system")] : [(.room, "file")]
-        for (index, (channel, label)) in rows.enumerated() {
-            let y = top + 1 + index
+        var y = top + 1
+        for (channel, label) in rows {
             canvas.text(4, y, label, fg: Palette.text, bg: Palette.side)
             drawLevels(channel, x: 12, y: y, width: w - 15)
+            canvas.region(0, y, w, 1, .visualizer)
+            y += 1
+            if channel == .room && state.microphoneChoosable {
+                // Which microphone it is; a click chooses another.
+                let name = state.sources[.room] ?? (state.awaitingMicrophone ? "none connected yet" : "…")
+                canvas.text(6, y, name.clipped(w - 8), fg: Palette.dim, bg: Palette.side)
+                canvas.region(0, y, w, 1, .chooseMicrophone)
+                y += 1
+            }
         }
-        canvas.region(0, top, w, 3, .visualizer)
     }
 
     /// One channel's visualizer, in one row: spectrum bars, a braille waveform, or a level meter.
@@ -299,6 +309,11 @@ struct SidebarView {
                     ? "type a name · return for the next · esc when you're done"
                     : "type a name · return next · ↑↓ move · esc done · the same name twice combines them",
                 x: x, width: w)
+        } else if let picker = state.microphones {
+            let visible = min(picker.options.count, max(1, height - 14))
+            panelTop = panelBottom - visible - 1
+            drawMicrophones(picker, x: x, top: panelTop, width: w, visible: visible)
+            hint("↑↓ move · return or a number chooses · esc keeps the one in use", x: x, width: w)
         } else if let saved = state.saved {
             panelTop = panelBottom - 3
             drawSaved(saved, x: x, top: panelTop, width: w)
@@ -393,8 +408,8 @@ struct SidebarView {
             ? keyList
             : !state.started
                 ? [
-                    ("space", "start", .pause), ("o", "open", .openRecording), ("q", "quit", .stop),
-                    ("k", "synthwave", .skin), ("?", "help", .help),
+                    ("space", "start", .pause), ("o", "open", .openRecording), ("m", "mic", .chooseMicrophone),
+                    ("q", "quit", .stop), ("k", "synthwave", .skin), ("?", "help", .help),
                 ]
                 : [
                 ("space", state.paused ? "resume" : "pause", .pause), ("/stop", "stop", .stop),
@@ -558,6 +573,27 @@ struct SidebarView {
             if w >= 60, let quote = model.sample(of: speaker) {
                 canvas.text(x + 40, y, ScreenModel.quoted(quote, width: w - 42), fg: Palette.dim)
             }
+        }
+    }
+
+    /// The microphones to choose from, numbered, with the one in use marked.
+    private mutating func drawMicrophones(
+        _ picker: LiveState.MicrophonePicker, x: Int, top: Int, width w: Int, visible: Int
+    ) {
+        canvas.box(
+            x, top, w, visible + 2, border: Palette.accent, fill: Palette.background, title: "Microphone",
+            titleColor: Palette.text)
+        let first = max(0, min(picker.selected - visible / 2, picker.options.count - visible))
+        for row in 0..<visible where picker.options.indices.contains(first + row) {
+            let index = first + row
+            let option = picker.options[index]
+            let selected = index == picker.selected
+            let y = top + 1 + row
+            if selected { canvas.put(x + 2, y, "❯", fg: Palette.accent, bold: true) }
+            canvas.text(x + 4, y, "\(index + 1)", fg: Palette.quiet)
+            canvas.text(x + 7, y, option.name, fg: selected ? Palette.text : Palette.dim, bold: selected, limit: w - 20)
+            if option.uid == state.microphoneChoice { canvas.text(x + w - 11, y, "✓ in use", fg: Palette.green) }
+            canvas.region(x, y, w, 1, .microphone(index))
         }
     }
 

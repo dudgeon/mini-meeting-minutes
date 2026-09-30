@@ -60,6 +60,7 @@ starts with one:
 | **Space** or **F8** | Pause, or resume. Paused audio is dropped, not buffered. Space does this when no note is being typed; F8 any time. Typing **/pause** works too |
 | **/stop** | Stop and save. **Ctrl-C** does the same |
 | **/name** | Name the speakers, any time |
+| **/mic** | Choose another microphone. Recording carries on with it |
 | **/look** | Switch between the sidebar and synthwave mode |
 | **/visual** | Switch the visualizer: spectrum, waveform, off |
 | **/help** | All the commands |
@@ -78,6 +79,7 @@ keys* in System Settings › Keyboard › Keyboard Shortcuts › Function Keys.
 |---|---|
 | **Space** | Start recording, after you confirm everyone has agreed. On the saved screen: another meeting |
 | **O** | Transcribe a recording instead. Dragging one onto the window does the same |
+| **M** | Choose the microphone, if there's more than one: the Mac's default, or a particular one. The choice is remembered for next time |
 | **Q** | Quit |
 | **Return** | On the saved screen: open the minutes (**R** shows them in Finder) |
 | **K**, **V**, **?** | Switch the look, the visualizer, and show all the keys |
@@ -111,7 +113,7 @@ picture shrinks with the window.
 | `--no-mic` | Don't capture the microphone |
 | `--no-system` | Don't capture system audio |
 | `--no-echo-cancel` | Skip echo removal. It's only needed when the call plays through speakers; on headphones you can turn it off |
-| `--mic-device <uid>` | Use a specific microphone. `mmm doctor` lists them |
+| `--mic-device <uid>` | Use a specific microphone. `mmm doctor` lists them; pressing **M** is easier |
 | `--no-names` | Don't ask for speaker names at the end |
 | `--skin <name>` | Start in `sidebar` (the default) or `synthwave` mode |
 

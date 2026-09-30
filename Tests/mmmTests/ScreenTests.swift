@@ -234,6 +234,29 @@ import Testing
         #expect(!Set(recording.regions.map { "\($0.action)" }).contains("openRecording"))
     }
 
+    @Test(arguments: Look.allCases)
+    func choosingAMicrophone(look: Look) {
+        var state = LiveState.Snapshot()
+        state.channels = [.room, .remote]
+        state.microphoneChoosable = true
+        state.sources = [.room: "MacBook Pro Microphone"]
+        let ready = Self.render(state, look, 120, 42)
+        #expect(Set(ready.regions.map { "\($0.action)" }).contains("chooseMicrophone"))
+        if look == .sidebar { #expect(Self.text(ready).contains("MacBook Pro Microphone")) }
+
+        state.microphoneChoice = "yeti"
+        state.microphones = LiveState.MicrophonePicker(
+            options: [
+                .init(uid: nil, name: "The Mac's default (MacBook Pro Microphone)"),
+                .init(uid: "yeti", name: "Yeti Stereo Microphone"),
+            ], selected: 1)
+        let picking = Self.render(state, look, 120, 42)
+        let text = Self.text(picking)
+        #expect(text.contains(look == .sidebar ? "Yeti Stereo Microphone" : "YETI STEREO MICROPHONE"))
+        #expect(text.contains(look == .sidebar ? "✓ in use" : "IN USE"))
+        #expect(Set(picking.regions.map { "\($0.action)" }).isSuperset(of: ["microphone(0)", "microphone(1)"]))
+    }
+
     @Test func redactionPlaceholdersStandApart() {
         let segments = ScreenModel.segments("I spoke with [NAME] about [the] budget [EMAIL].")
         #expect(segments.map(\.text) == ["I spoke with ", "[NAME]", " about [the] budget ", "[EMAIL]", "."])
@@ -279,19 +302,22 @@ final class Calls<Value: Sendable>: Sendable {
     /// Recordings asked for: nil means the Open window.
     let opened = Calls<URL?>()
     let declined = Calls<Bool>()
+    /// Microphones chosen: nil means the Mac's default.
+    let microphones = Calls<String?>()
 
     init() {
         let live = live
         let save: AsyncStream<Void>.Continuation
         let stop: AsyncStream<Void>.Continuation
         let choose: AsyncStream<Record.Next>.Continuation
-        let (opened, declined) = (opened, declined)
+        let (opened, declined, microphones) = (opened, declined, microphones)
         (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         (stops, stop) = AsyncStream.makeStream(of: Void.self)
         (choices, choose) = AsyncStream.makeStream(of: Record.Next.self)
         controls = LiveScreen.Controls(
             paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop, save: save, choose: choose,
-            openRecording: { opened.record($0) }, declined: { declined.record(true) })
+            openRecording: { opened.record($0) }, declined: { declined.record(true) },
+            chooseMicrophone: { microphones.record($0) })
         naming = AsyncStream.makeStream(of: Void.self).continuation
     }
 
@@ -454,6 +480,46 @@ final class Calls<Value: Sendable>: Sendable {
         live.update { $0.askingConsent = true }
         press(.char("y"))
         #expect(live.snapshot.started && live.snapshot.consentedAt != nil && declined.all.count == 1)
+    }
+
+    @Test func aMicrophoneCanBeChosenBeforeAndDuringAMeeting() async {
+        typealias Option = LiveState.MicrophonePicker.Option
+        let options = [
+            Option(uid: nil, name: "The Mac's default (MacBook Pro Microphone)"),
+            Option(uid: "built-in", name: "MacBook Pro Microphone"),
+            Option(uid: "yeti", name: "Yeti Stereo Microphone"),
+        ]
+        live.update { $0.microphoneChoosable = true }
+        press(.char("m"))  // before recording
+        #expect(live.snapshot.microphones != nil)
+        live.update { $0.microphones = LiveState.MicrophonePicker(options: options) }  // as with two connected
+        press(.down, .down, .char("q"))  // other keys don't leave the list
+        #expect(live.snapshot.microphones?.selected == 2)
+        press(.enter)
+        #expect(microphones.all == ["yeti"] && live.snapshot.microphones == nil)
+
+        // During a meeting: /mic, then a number; Escape keeps the one in use.
+        press(.char(" "), .char("y"))
+        type("/mic")
+        press(.enter)
+        #expect(live.snapshot.microphones != nil && live.snapshot.draft == nil)
+        live.update { $0.microphones = LiveState.MicrophonePicker(options: options) }
+        press(.char("1"))
+        #expect(microphones.all == ["yeti", nil])
+        type("/mic")
+        press(.enter, .escape)
+        #expect(live.snapshot.microphones == nil && microphones.all.count == 2)
+        #expect(await stopRequests() == 0)
+    }
+
+    @Test func transcribingARecordingUsesNoMicrophone() {
+        live.update {
+            $0.recording = LiveState.Recording(name: "Team sync.m4a", length: 600)
+            $0.startedAt = Date()
+        }
+        type("/mic")
+        press(.enter)
+        #expect(live.snapshot.microphones == nil && live.snapshot.notice != nil)
     }
 
     @Test func returnWritesANoteWhereTypingBegan() async {
