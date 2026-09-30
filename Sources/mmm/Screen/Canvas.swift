@@ -53,6 +53,8 @@ enum ScreenAction: Sendable, Equatable {
     case consent, decline
     /// After saving: another recording, the minutes, their path on the clipboard, or done.
     case newMeeting, open, reveal, copyPath, quit
+    /// The whole transcript (the minutes, as markdown) on the clipboard: so far, or once saved.
+    case copyTranscript
     /// Before recording or after saving: transcribe a recording instead, chosen in the Open window.
     case openRecording
     /// Open the list of microphones; in it, choose one by its place in the list.

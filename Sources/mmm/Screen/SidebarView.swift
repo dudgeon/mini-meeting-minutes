@@ -77,8 +77,8 @@ struct SidebarView {
         if state.saved != nil {
             return [
                 ("space", "new recording", .newMeeting), ("o", "open a recording", .openRecording),
-                ("return", "open minutes", .open), ("c", "copy the path", .copyPath), ("r", "show in Finder", .reveal),
-                ("k", "synthwave", .skin), ("q", "quit", .quit),
+                ("return", "open minutes", .open), ("c", "copy the path", .copyPath),
+                ("t", "copy the transcript", .copyTranscript), ("r", "show in Finder", .reveal), ("q", "quit", .quit),
             ]
         }
         if state.askingConsent {
@@ -103,7 +103,10 @@ struct SidebarView {
             ("space", state.paused ? "resume" : "pause", .pause), ("/stop", "stop and save", .stop),
             ("/name", "name speakers", .name),
         ] + (state.microphoneChoosable ? [("/mic", "microphone", .chooseMicrophone)] : [])
-            + [("/look", "synthwave", .skin), ("/help", "all commands", .help)]
+            + [
+                ("/copy", "copy transcript", .copyTranscript), ("/look", "synthwave", .skin),
+                ("/help", "all commands", .help),
+            ]
     }
 
     // MARK: - Sidebar
@@ -317,7 +320,9 @@ struct SidebarView {
         } else if let saved = state.saved {
             panelTop = panelBottom - 3
             drawSaved(saved, x: x, top: panelTop, width: w)
-            hint("return open the minutes · c copy the path · space new recording · q quit", x: x, width: w)
+            hint(
+                "return open the minutes · c copy the path · t copy the transcript · space new recording", x: x,
+                width: w)
         } else if state.askingConsent {
             let text = state.recording == nil ? Self.consentText : Self.recordingConsentText
             let lines =

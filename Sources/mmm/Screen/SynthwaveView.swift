@@ -306,10 +306,12 @@ struct SynthwaveView {
             state.started && !state.stopping && !state.finished && state.saved == nil
             ? [("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("/STOP", "SAVE", .stop),
                ("/NAME", "NAME", .name)] + (state.microphoneChoosable ? [("/MIC", "MIC", .chooseMicrophone)] : [])
-                + [("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer), ("/HELP", "HELP", .help)]
+                + [("/COPY", "COPY", .copyTranscript), ("/LOOK", "SIDEBAR", .skin), ("/VISUAL", "VISUALS", .visualizer),
+                   ("/HELP", "HELP", .help)]
             : state.saved != nil
             ? [("SPACE", "NEW", .newMeeting), ("O", "OPEN FILE", .openRecording), ("RETURN", "MINUTES", .open),
-               ("C", "COPY PATH", .copyPath), ("R", "FINDER", .reveal), ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
+               ("C", "COPY PATH", .copyPath), ("T", "COPY TEXT", .copyTranscript), ("R", "FINDER", .reveal),
+               ("K", "SIDEBAR", .skin), ("Q", "QUIT", .quit)]
             : state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
             : [("SPACE", "START", .pause), ("O", "OPEN FILE", .openRecording)]
@@ -317,7 +319,7 @@ struct SynthwaveView {
                 + [("Q", "QUIT", .stop), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin), ("?", "HELP", .help)]
         // In a narrow window the visualizer key goes first, then help; the way back to the sidebar stays.
         func fits() -> Bool { keys.reduce(2) { $0 + $1.0.count + $1.1.count + 4 } - 3 <= width - 2 }
-        for dropped in ["V", "/VISUAL", "?", "/HELP", "R", "M", "/MIC", "O"] where !fits() {
+        for dropped in ["V", "/VISUAL", "?", "/HELP", "R", "M", "/MIC", "/COPY", "O"] where !fits() {
             keys.removeAll { $0.0 == dropped }
         }
         var x = 2

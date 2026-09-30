@@ -391,12 +391,7 @@ struct Record: AsyncParsableCommand {
         let saving = Task {
             for await _ in saves {
                 let snapshot = live.snapshot
-                guard let startedAt = snapshot.startedAt else { continue }
-                let document = MinutesDocument(
-                    title: snapshot.title, startDate: startedAt, duration: snapshot.elapsed, sources: snapshot.sources,
-                    redaction: redaction, echoCancellation: echo, turns: snapshot.turns, names: snapshot.names,
-                    notes: snapshot.notes, consentConfirmedAt: snapshot.consentedAt,
-                    recording: snapshot.recording.map { MinutesDocument.Recording(name: $0.name, length: $0.length) })
+                guard let document = snapshot.minutes() else { continue }
                 if (try? document.write(to: URL(fileURLWithPath: snapshot.outputPath))) != nil {
                     live.update { $0.savedAt = snapshot.elapsed }
                 }
@@ -465,7 +460,7 @@ struct Record: AsyncParsableCommand {
             terminal: terminal, live: live, clock: recording == nil ? clock : nil, naming: (namesDone, finishNaming),
             controls: LiveScreen.Controls(
                 paused: paused, begin: begin, stop: stop, save: save, choose: choose, openRecording: openRecording,
-                declined: declined, chooseMicrophone: chooseMicrophone, copyPath: Setup.copyToClipboard))
+                declined: declined, chooseMicrophone: chooseMicrophone, copy: Setup.copyToClipboard))
         if screen == nil {
             Console.note(
                 recording.map {
@@ -785,7 +780,7 @@ struct LiveScreen {
         /// Use this microphone (nil: the Mac's default) from now on.
         let chooseMicrophone: @Sendable (String?) -> Void
         /// Puts text on the clipboard, and says whether that worked.
-        let copyPath: @Sendable (String) -> Bool
+        let copy: @Sendable (String) -> Bool
     }
 
     let terminal: Terminal
@@ -820,6 +815,7 @@ struct LiveScreen {
                 previous = now
                 live.update {
                     if !$0.stopping, let seconds = clock?.seconds(to: HostTime.now()) { $0.elapsed = seconds }
+                    $0.fadeConfirmation()
                 }
                 let snapshot = live.snapshot
                 let size = terminal.size
@@ -968,6 +964,14 @@ struct LiveScreen {
             } else if snapshot.recording != nil {
                 live.update { $0.notice = "Transcribing a recording uses no microphone." }
             }
+        case .copyTranscript:
+            // The minutes so far, as the file would read now.
+            guard let document = snapshot.minutes() else { return }
+            let copied = controls.copy(document.markdown())
+            let words = document.turns.reduce(0) { $0 + $1.text.split(separator: " ").count }
+            let message =
+                copied ? "Copied the transcript so far (\(words) words) to the clipboard." : "Couldn't copy the transcript."
+            live.update { $0.confirm(message) }
         case .microphone, .consent, .decline, .newMeeting, .open, .reveal, .copyPath, .quit: break
         }
     }
@@ -1044,7 +1048,8 @@ struct LiveScreen {
     }
 
     /// The saved screen: Space for another meeting, O (or a dropped file) for a recording, Return
-    /// opens the minutes, R shows them in Finder, C copies their path again, Q or Escape quits.
+    /// opens the minutes, R shows them in Finder, C copies their path again, T copies the whole
+    /// transcript, Q or Escape quits.
     private static func handleSaved(
         _ key: Key, _ saved: LiveState.Saved, snapshot: LiveState.Snapshot, live: LiveState, controls: Controls
     ) {
@@ -1056,6 +1061,7 @@ struct LiveScreen {
             case "o": action = .openRecording
             case "r": action = .reveal
             case "c": action = .copyPath
+            case "t": action = .copyTranscript
             case "q": action = .quit
             case "k": action = .skin
             case "f": action = .follow
@@ -1080,11 +1086,18 @@ struct LiveScreen {
         case .open: Setup.openMinutes(saved.path)
         case .reveal: Setup.showInFinder(saved.path)
         case .copyPath:
-            if controls.copyPath(saved.path) {
+            if controls.copy(saved.path) {
                 live.update {
                     $0.saved?.copied = true
-                    $0.notice = "Copied the path of the minutes to the clipboard."
+                    $0.confirm("Copied the path of the minutes to the clipboard.")
                 }
+            }
+        case .copyTranscript:
+            // The minutes as saved: the header and the whole transcript, as markdown.
+            let text = try? String(contentsOfFile: saved.path, encoding: .utf8)
+            let copied = text.map(controls.copy) ?? false
+            live.update {
+                $0.confirm(copied ? "Copied the whole transcript to the clipboard." : "Couldn't copy the transcript.")
             }
         case .skin: live.update { $0.look = $0.look.next }
         case .follow: live.update { $0.scroll = 0 }

@@ -96,6 +96,9 @@ final class LiveState: Sendable {
         var warnings: [String] = []
         /// A passing message, such as why a dropped file can't be transcribed; cleared on starting.
         var notice: String?
+        /// A brief confirmation ("Copied…"), shown until `flashUntil`.
+        var flash: String?
+        var flashUntil: Date?
         var outputPath = ""
         /// What's being blanked out.
         var redaction: Set<PIICategory> = []
@@ -156,8 +159,31 @@ final class LiveState: Sendable {
 extension LiveState.Snapshot {
     var started: Bool { startedAt != nil }
 
-    /// What to point out above the prompt: the newest warning, else a passing notice.
-    var message: String? { warnings.last ?? notice }
+    /// What to point out above the prompt: the newest warning, else a confirmation, else a notice.
+    var message: String? { warnings.last ?? flash ?? notice }
+
+    /// Shows a brief confirmation for a few seconds.
+    mutating func confirm(_ text: String, now: Date = Date()) {
+        flash = text
+        flashUntil = now.addingTimeInterval(5)
+    }
+
+    /// Clears a confirmation whose time is up; the screen checks as it draws.
+    mutating func fadeConfirmation(now: Date = Date()) {
+        guard let until = flashUntil, until <= now else { return }
+        flash = nil
+        flashUntil = nil
+    }
+
+    /// The minutes as they'd be saved at this moment; nil before recording starts.
+    func minutes(inProgress: Bool = true) -> MinutesDocument? {
+        guard let startedAt else { return nil }
+        return MinutesDocument(
+            title: title, startDate: startedAt, duration: elapsed, sources: sources, redaction: redaction,
+            echoCancellation: echoCancellation, turns: turns, names: names, notes: notes,
+            consentConfirmedAt: consentedAt, inProgress: inProgress,
+            recording: recording.map { MinutesDocument.Recording(name: $0.name, length: $0.length) })
+    }
 
     /// Adds the note being typed, if it has any words, and closes it. Returns whether a note was
     /// added.

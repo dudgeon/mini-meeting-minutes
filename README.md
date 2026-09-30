@@ -84,7 +84,9 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
    minutes, **Space** to record another meeting, or **Q** to quit.
 
 Your minutes are saved in the **Minutes** folder inside **Documents**, and their full path is copied
-to the clipboard. That's handy for pasting into an AI assistant to work with them next.
+to the clipboard. That's handy for pasting into an AI assistant to work with them next. To copy the
+whole transcript instead, press **T** once they're saved, or type **/copy** during a meeting for the
+transcript so far.
 
 ### Transcribe a recording you already have
 

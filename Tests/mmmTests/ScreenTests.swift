@@ -186,7 +186,7 @@ import Testing
         let done = Self.render(saved, look, 120, 42)
         #expect(Self.text(done).lowercased().contains("saved"))
         #expect(Self.text(done).lowercased().contains("path copied"))
-        #expect(Set(done.regions.map { "\($0.action)" }).contains("copyPath"))
+        #expect(Set(done.regions.map { "\($0.action)" }).isSuperset(of: ["copyPath", "copyTranscript"]))
         #expect(Self.text(done).contains("Good morning everyone."))
         #expect(Set(done.regions.map { "\($0.action)" }).isSuperset(of: ["newMeeting", "open", "reveal", "quit"]))
     }
@@ -323,7 +323,7 @@ final class Calls<Value: Sendable>: Sendable {
             paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop, save: save, choose: choose,
             openRecording: { opened.record($0) }, declined: { declined.record(true) },
             chooseMicrophone: { microphones.record($0) },
-            copyPath: { text in
+            copy: { text in
                 clipboard.record(text)
                 return true
             })
@@ -491,6 +491,38 @@ final class Calls<Value: Sendable>: Sendable {
         live.update { $0.askingConsent = true }
         press(.char("y"))
         #expect(live.snapshot.started && live.snapshot.consentedAt != nil && declined.all.count == 1)
+    }
+
+    @Test func theWholeTranscriptCanBeCopied() throws {
+        // During a meeting: the minutes so far.
+        live.update {
+            $0.startedAt = Date()
+            $0.title = "Planning review"
+            $0.turns = LookTests.snapshot().turns
+        }
+        type("/copy")
+        press(.enter)
+        let sofar = try #require(clipboard.all.last)
+        #expect(sofar.hasPrefix("# Planning review") && sofar.contains("Let's get started with the planning review."))
+        #expect(live.snapshot.flash?.contains("words") == true && live.snapshot.draft == nil)
+
+        // Once saved: the file, exactly.
+        let folder = try Fixtures.folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("minutes.md")
+        try "# Planning review\n\nEverything that was said.\n".write(to: file, atomically: true, encoding: .utf8)
+        live.update { $0.saved = LiveState.Saved(path: file.path, turns: 2, speakers: 2) }
+        press(.char("t"))
+        #expect(clipboard.all.last == "# Planning review\n\nEverything that was said.\n")
+
+        // Confirmations fade after a few seconds.
+        var state = live.snapshot
+        let copiedAt = Date()
+        state.confirm("Copied.", now: copiedAt)
+        state.fadeConfirmation(now: copiedAt.addingTimeInterval(2))
+        #expect(state.message == "Copied.")
+        state.fadeConfirmation(now: copiedAt.addingTimeInterval(6))
+        #expect(state.flash == nil && state.message == nil)
     }
 
     @Test func aMicrophoneCanBeChosenBeforeAndDuringAMeeting() async {

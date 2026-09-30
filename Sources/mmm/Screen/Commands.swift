@@ -4,7 +4,7 @@ import Foundation
 /// takes a note, so commands start with a slash: then no sentence typed into it, "quick
 /// question" or "please pause", can stop, pause or rearrange the meeting by accident.
 enum Command: String, CaseIterable, Sendable {
-    case stop, pause, name, mic, look, visual, help
+    case stop, pause, name, mic, copy, look, visual, help
 
     /// Other words that run it: `/resume` while paused, `/synthwave` and so on.
     var aliases: [String] {
@@ -24,6 +24,7 @@ enum Command: String, CaseIterable, Sendable {
         case .pause: "pause or resume (paused audio is dropped, not kept)"
         case .name: "name the speakers"
         case .mic: "choose the microphone"
+        case .copy: "copy the transcript so far, as markdown, to the clipboard"
         case .look: "switch between the sidebar and synthwave looks"
         case .visual: "visualizer: spectrum, waveform or off"
         case .help: "all the commands and keys"
@@ -36,6 +37,7 @@ enum Command: String, CaseIterable, Sendable {
         case .pause: .pause
         case .name: .name
         case .mic: .chooseMicrophone
+        case .copy: .copyTranscript
         case .look: .skin
         case .visual: .visualizer
         case .help: .help

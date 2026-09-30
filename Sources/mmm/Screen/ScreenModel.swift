@@ -213,6 +213,7 @@ struct ScreenModel {
             ("/stop", "stop and save the minutes (ctrl-c does too)"),
             ("/name", "name the speakers"),
             ("/mic", "choose the microphone (m before a meeting)"),
+            ("/copy", "copy the transcript so far, as markdown (t once the minutes are saved)"),
             ("/look", "switch to \(other)"),
             ("/visual", "visualizer: spectrum, waveform or off"),
             ("tab", "finish typing a command's name"),
