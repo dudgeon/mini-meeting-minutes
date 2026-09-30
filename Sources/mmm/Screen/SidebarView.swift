@@ -91,7 +91,7 @@ struct SidebarView {
                 ? [("return", "run it", nil), ("tab", "complete it", nil), ("esc", "cancel", nil)]
                 : [("return", "add the note", nil), ("esc", "cancel", nil)]
         }
-        if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
+        if state.finished || state.stopping { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
         if !state.started {
             return [
                 ("space", "start recording", .pause), ("o", "open a recording", .openRecording), ("q", "quit", .stop),
