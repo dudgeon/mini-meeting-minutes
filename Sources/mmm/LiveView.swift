@@ -20,11 +20,15 @@ final class LiveState: Sendable {
 
     struct Snapshot: Sendable {
         var title = ""
+        /// When recording began; nil while waiting for Space.
+        var startedAt: Date?
         var elapsed: TimeInterval = 0
         var paused = false
         var stopping = false
         var finished = false
         var channels: Set<Channel> = []
+        /// No microphone was found at the start; one connected later will be used.
+        var awaitingMicrophone = false
         var levels: [Channel: Float] = [:]
         /// The newest ~128 ms of each channel's audio, for the visualizer only.
         var recent: [Channel: [Float]] = [:]
@@ -94,6 +98,8 @@ final class LiveState: Sendable {
 }
 
 extension LiveState.Snapshot {
+    var started: Bool { startedAt != nil }
+
     /// Adds the note being typed, if it has any words, and closes it. Returns whether a note was
     /// added.
     mutating func addDraft() -> Bool {

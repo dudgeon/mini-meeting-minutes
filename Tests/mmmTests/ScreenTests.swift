@@ -70,6 +70,7 @@ import Testing
         state.recent = [.room: (0..<2048).map { sin(Float($0) / 9) * 0.2 }]
         state.outputPath = "/tmp/minutes.md"
         state.title = "Planning review"
+        state.startedAt = Date(timeIntervalSince1970: 0)
         return state
     }
 
@@ -145,6 +146,20 @@ import Testing
         #expect(Self.text(Self.render(state, look, 120, 42)).contains("Budget owner is"))
     }
 
+    @Test(arguments: Look.allCases)
+    func readyBeforeRecordingAndWaitingForAMicrophone(look: Look) {
+        var state = LiveState.Snapshot()
+        state.channels = [.remote]
+        state.awaitingMicrophone = true
+        state.outputPath = "/tmp/minutes.md"
+        let text = Self.text(Self.render(state, look, 120, 42))
+        #expect(text.lowercased().contains("press space to start recording"))
+        #expect(text.contains(look == .sidebar ? "none connected" : "NONE YET"))
+        #expect(!text.lowercased().contains("minutes.md"))  // the file is named when recording begins
+        let actions = Set(Self.render(state, look, 120, 42).regions.map { "\($0.action)" })
+        #expect(actions.contains("pause") && actions.contains("stop") && !actions.contains("note"))
+    }
+
     @Test func redactionPlaceholdersStandApart() {
         let segments = ScreenModel.segments("I spoke with [NAME] about [the] budget [EMAIL].")
         #expect(segments.map(\.text) == ["I spoke with ", "[NAME]", " about [the] budget ", "[EMAIL]", "."])
@@ -172,16 +187,42 @@ import Testing
     }
 }
 
-@Suite struct NoteTypingTests {
-    @Test func returnWritesANoteWhereTypingBegan() async {
-        let live = LiveState()
-        live.update { $0.elapsed = 10 }
-        let (_, stop) = AsyncStream.makeStream(of: Void.self)
-        let (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        let (_, naming) = AsyncStream.makeStream(of: Void.self)
-        func press(_ keys: Key...) {
-            for key in keys { LiveScreen.handle(key, live: live, paused: PauseFlag(), stop: stop, save: save, finishNaming: naming) }
+@Suite struct KeyHandlingTests {
+    let live = LiveState()
+    let paused = PauseFlag()
+    let stop: AsyncStream<Void>.Continuation
+    let saves: AsyncStream<Void>
+    let save: AsyncStream<Void>.Continuation
+    let naming: AsyncStream<Void>.Continuation
+
+    init() {
+        stop = AsyncStream.makeStream(of: Void.self).continuation
+        (saves, save) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        naming = AsyncStream.makeStream(of: Void.self).continuation
+    }
+
+    func press(_ keys: Key...) {
+        let live = live
+        for key in keys {
+            LiveScreen.handle(
+                key, live: live, paused: paused, begin: { live.update { $0.startedAt = Date() } }, stop: stop,
+                save: save, finishNaming: naming)
         }
+    }
+
+    @Test func spaceStartsRecordingThenPauses() {
+        press(.enter, .char("x"))  // no notes before recording begins
+        #expect(!live.snapshot.started && live.snapshot.draft == nil && live.snapshot.notes.isEmpty)
+        press(.char(" "))
+        #expect(live.snapshot.started && !paused.isPaused)
+        press(.char(" "))
+        #expect(paused.isPaused && live.snapshot.paused)
+    }
+
+    @Test func returnWritesANoteWhereTypingBegan() async {
+        let (live, save, saves) = (live, save, saves)
+        live.update { $0.elapsed = 10 }
+        press(.char(" "))
         press(.enter)
         #expect(live.snapshot.draft != nil)
         live.update { $0.elapsed = 12 }  // typing starts two seconds later...
@@ -199,6 +240,24 @@ import Testing
         // Escape drops a note, and an empty one isn't added.
         press(.enter, .char("x"), .escape, .enter, .enter)
         #expect(live.snapshot.notes.count == 1 && live.snapshot.draft == nil)
+    }
+}
+
+@Suite struct RecordingPartsTests {
+    @Test func theClockStartsOnce() {
+        let clock = RecordingClock()
+        #expect(!clock.started && clock.seconds(to: HostTime.now()) == nil)
+        #expect(clock.start())
+        #expect(!clock.start())
+        let seconds = clock.seconds(to: HostTime.now() + HostTime.ticks(2))!
+        #expect(seconds > 1.9 && seconds < 2.5)
+    }
+
+    @Test func aMicrophoneThatArrivesAfterStoppingIsTurnedAway() {
+        let slot = MicrophoneSlot()
+        #expect(slot.put(MicrophoneCapture(onSamples: { _, _ in })))
+        slot.close()
+        #expect(!slot.put(MicrophoneCapture(onSamples: { _, _ in })))
     }
 }
 

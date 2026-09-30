@@ -63,6 +63,7 @@ struct SidebarView {
 
     /// The recording status as a symbol, its color, and a word.
     private var status: (symbol: String, color: RGB, label: String) {
+        if !state.started && !state.stopping { return ("○", Palette.dim, "Ready") }
         if state.finished { return ("✓", Palette.green, "Done") }
         if state.stopping { return (String(ScreenModel.spinner(time)), Palette.accent, "Finishing") }
         if state.paused { return ("❚❚", Palette.amber, "Paused") }
@@ -73,6 +74,12 @@ struct SidebarView {
     private var keyList: [(key: String, label: String, action: ScreenAction?)] {
         if state.draft != nil { return [("return", "add the note", nil), ("esc", "cancel", nil)] }
         if state.finished { return [("↑↓", "scroll", .follow), ("k", "synthwave", .skin)] }
+        if !state.started {
+            return [
+                ("space", "start recording", .pause), ("q", "quit", .stop), ("k", "synthwave", .skin),
+                ("?", "all shortcuts", .help),
+            ]
+        }
         return [
             ("return", "add a note", .note), ("space", state.paused ? "resume" : "pause", .pause),
             ("q", "stop and save", .stop), ("n", "name speakers", .name), ("k", "synthwave", .skin),
@@ -180,7 +187,8 @@ struct SidebarView {
         let bg = Palette.side
         guard w > 0 else { return }
         guard state.channels.contains(channel) else {
-            canvas.text(x, y, "off", fg: Palette.quiet, bg: bg)
+            let waiting = channel == .room && state.awaitingMicrophone
+            canvas.text(x, y, waiting ? "none connected" : "off", fg: Palette.quiet, bg: bg, limit: w)
             return
         }
         let ink = model.listening ? Palette.accent : Palette.quiet
@@ -230,7 +238,9 @@ struct SidebarView {
             let nameX = x + 1 + file.folder.count + 3
             canvas.text(x + 1, 1, file.folder, fg: Palette.dim)
             canvas.put(nameX - 2, 1, "›", fg: Palette.quiet)
-            canvas.text(nameX, 1, file.name.clipped(x + w - saved.count - 2 - nameX), fg: Palette.text)
+            let name = state.started ? file.name : "a new file, once you start"
+            canvas.text(
+                nameX, 1, name.clipped(x + w - saved.count - 2 - nameX), fg: state.started ? Palette.text : Palette.quiet)
         } else {
             drawCompactStatus(x: x, room: w - saved.count - 2)
         }
@@ -306,7 +316,9 @@ struct SidebarView {
         let keys: [(key: String, label: String, action: ScreenAction?)] =
             state.finished
             ? keyList
-            : [
+            : !state.started
+                ? [("space", "start", .pause), ("q", "quit", .stop), ("k", "synthwave", .skin), ("?", "help", .help)]
+                : [
                 ("return", "note", .note), ("space", state.paused ? "resume" : "pause", .pause), ("q", "stop", .stop),
                 ("n", "name", .name), ("k", "synthwave", .skin), ("?", "help", .help),
             ]
@@ -331,6 +343,12 @@ struct SidebarView {
             canvas.text(
                 x + 4, y, "Finishing up: placing the last words and checking every speaker…", fg: Palette.text,
                 limit: w - 6)
+        } else if !state.started {
+            let quit = "q to quit"
+            canvas.put(x + 2, y, ">", fg: Palette.text)
+            canvas.text(x + 4, y, "Press space to start recording".clipped(w - 8 - quit.count), fg: Palette.text, bold: true)
+            canvas.text(x + w - 2 - quit.count, y, quit, fg: Palette.quiet)
+            canvas.region(x, top, w, 3, .pause)
         } else if state.paused {
             canvas.text(x + 2, y, "❚❚", fg: Palette.amber)
             canvas.text(
@@ -517,7 +535,12 @@ struct SidebarView {
     private mutating func drawEmptyTranscript(x: Int, top: Int, rows: Int, width w: Int) {
         let title: String
         let detail: String
-        if state.stopping || state.finished {
+        if !state.started && !state.stopping {
+            title = "Ready when you are"
+            detail =
+                "Nothing is recorded until you press space."
+                + (width >= 84 ? " The meters under LISTENING TO show what the microphone and the Mac can hear." : "")
+        } else if state.stopping || state.finished {
             title = "Nothing was heard"
             detail = "No speech was picked up in this recording."
         } else if state.paused {

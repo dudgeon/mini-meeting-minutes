@@ -49,8 +49,12 @@ final class Terminal: Sendable {
                         continue
                     }
                     var byte: UInt8 = 0
-                    guard read(STDIN_FILENO, &byte, 1) == 1 else { continue }
-                    for key in parser.feed(byte) { continuation.yield(key) }
+                    let count = read(STDIN_FILENO, &byte, 1)
+                    if count == 1 {
+                        for key in parser.feed(byte) { continuation.yield(key) }
+                    } else if count == 0 || (errno != EINTR && errno != EAGAIN) {
+                        break  // the terminal has gone, e.g. its window was closed
+                    }
                 }
                 continuation.finish()
             }
@@ -62,8 +66,9 @@ final class Terminal: Sendable {
         reading.store(false, ordering: .relaxed)
     }
 
+    /// Writes to the terminal, quietly doing nothing once it has gone (its window was closed).
     func write(_ text: String) {
-        FileHandle.standardOutput.write(Data(text.utf8))
+        try? FileHandle.standardOutput.write(contentsOf: Data(text.utf8))
     }
 }
 

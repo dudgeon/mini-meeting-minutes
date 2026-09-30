@@ -123,6 +123,7 @@ struct ScreenModel {
 
     /// When the minutes on disk were last brought up to date.
     var savedStatus: String {
+        guard state.started else { return "" }
         guard let saved = state.savedAt else { return "not saved yet" }
         let ago = Int(max(0, state.elapsed - saved))
         return ago < 10 ? "saved just now" : ago < 60 ? "saved \(ago)s ago" : "saved \(ago / 60) min ago"

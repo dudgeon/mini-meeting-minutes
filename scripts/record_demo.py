@@ -134,9 +134,9 @@ class Emulator:
             position += 1
 
 
-# Keys pressed during the demo, by seconds after the screen appears: a note ("\r" is Return), then
-# synthwave mode for a while, and back to the sidebar.
-KEYS = [(8, "\rAsk finance for the infrastructure breakdown\r"), (20, "k"), (34, "k")]
+# Keys pressed during the demo, by seconds after the screen appears: Space to start recording, a
+# note ("\r" is Return), then synthwave mode for a while, and back to the sidebar.
+KEYS = [(2, " "), (10, "\rAsk finance for the infrastructure breakdown\r"), (22, "k"), (36, "k")]
 NAMES = ["Samantha", "Daniel", "Karen"]
 
 
@@ -151,7 +151,7 @@ def wait_for(path, text, timeout=180):
 
 
 def type_keys(process, typescript):
-    wait_for(typescript, "Recording")
+    wait_for(typescript, "Ready")
     start = time.time()
     for at, keys in KEYS:
         time.sleep(max(0, start + at - time.time()))

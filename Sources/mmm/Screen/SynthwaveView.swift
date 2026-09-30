@@ -101,7 +101,9 @@ struct SynthwaveView {
         let brand = "MINI MEETING MINUTES"
         let limit = width >= 90 ? width - brand.count - 4 : width - 2
         let (label, color): (String, RGB) =
-            state.finished
+            !state.started && !state.stopping
+            ? ("○ READY", Palette.yellow)
+            : state.finished
             ? ("■ DONE", Palette.cyan)
             : state.stopping
                 ? ("■ FINISHING", blink ? Palette.yellow : Palette.dim)
@@ -121,7 +123,8 @@ struct SynthwaveView {
                     canvas.put(x + 4 + cell, y, cell < lit ? "▮" : "▯", fg: cell < lit ? ink : Palette.unlit, bg: bg)
                 }
             } else {
-                canvas.text(x + 4, y, "OFF", fg: Palette.unlit, bg: bg)
+                let waiting = channel == .room && state.awaitingMicrophone
+                canvas.text(x + 4, y, waiting ? "NONE YET" : "OFF", fg: Palette.unlit, bg: bg)
             }
             x += 17
         }
@@ -200,7 +203,10 @@ struct SynthwaveView {
             let title = state.title.uppercased().clipped(width / 2 - 4)
             canvas.text(3, top + 1, title, fg: Palette.dim, bg: bg, bold: true)
             let room = width - 8 - title.count
-            let path = "→ " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 2, 0))
+            let path =
+                state.started
+                ? "→ " + LiveView.fit(LiveView.abbreviate(state.outputPath), max(room - 2, 0))
+                : "A NEW FILE, ONCE YOU START"
             if room > 12 { canvas.text(width - 3 - path.count, top + 1, path, fg: Palette.dim, bg: bg) }
             first = top + 3
         }
@@ -208,7 +214,10 @@ struct SynthwaveView {
         guard rows > 0 else { return }
         let lines = transcriptRows(textWidth: max(10, width - 19))
         guard !lines.isEmpty else {
-            let message = model.listening ? "LISTENING… WORDS APPEAR HERE AS THEY'RE SPOKEN" : "NOTHING HEARD YET"
+            let message =
+                !state.started && !state.stopping
+                ? "PRESS SPACE TO START RECORDING · NOTHING IS RECORDED UNTIL THEN"
+                : model.listening ? "LISTENING… WORDS APPEAR HERE AS THEY'RE SPOKEN" : "NOTHING HEARD YET"
             canvas.text(max(1, (width - message.count) / 2), first + rows / 2, message, fg: Palette.dim, bg: bg)
             return
         }
@@ -256,6 +265,9 @@ struct SynthwaveView {
         var keys: [(String, String, ScreenAction)] =
             state.finished
             ? [("↑↓", "SCROLL", .follow), ("K", "SIDEBAR", .skin)]
+            : !state.started
+            ? [("SPACE", "START", .pause), ("Q", "QUIT", .stop), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),
+               ("?", "HELP", .help)]
             : [
                 ("SPACE", state.paused ? "RESUME" : "PAUSE", .pause), ("Q", "STOP & SAVE", .stop),
                 ("RETURN", "NOTE", .note), ("N", "NAME", .name), ("V", "VISUALS", .visualizer), ("K", "SIDEBAR", .skin),

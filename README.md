@@ -47,9 +47,11 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
 1. Double-click **Mini Meeting Minutes** on your Desktop.
 2. The first time, your Mac asks whether **Terminal** may use the microphone and record system
    audio. Click **Allow** both times.
-3. To jot something down, press **Return**, type your note, and press **Return** again. It goes
+3. Press **Space** to start recording. Nothing is recorded until then, but the meters already
+   move, so you can check that your microphone is heard.
+4. To jot something down, press **Return**, type your note, and press **Return** again. It goes
    into the transcript at the moment you started typing.
-4. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
+5. When the meeting is over, press **Q**. Type a name for each speaker (or press **Return** to
    skip them), then press **Return** once more to open your minutes.
 
 Your minutes are saved in the **Minutes** folder inside **Documents**.
@@ -101,7 +103,7 @@ applies only to what people said.
 | Key | Does |
 |---|---|
 | **Return** | Write a note; **Return** again adds it, **Esc** cancels |
-| **Space** | Pause or resume (paused audio is dropped, not buffered) |
+| **Space** | Start recording; after that, pause or resume (paused audio is dropped, not buffered) |
 | **Q** or Ctrl-C | Stop and save |
 | **N** | Name the speakers, any time |
 | **V** | Switch the visualizer: spectrum, waveform, off |
@@ -116,7 +118,12 @@ picture shrinks with the window.
 When you stop, `mmm` re-examines every speaker across the whole meeting, which can renumber a few
 labels (names you gave follow the right person), then asks you to name each speaker, showing
 something they said. The minutes are written to `~/Documents/Minutes/` and kept up to date during
-the meeting, so a crash loses at most the last minute or so.
+the meeting, so a crash loses at most the last minute or so. Closing the window (or quitting
+Terminal) stops the recording just like **Q** and saves the minutes, keeping any names you gave
+along the way; it just can't ask for the rest.
+
+No microphone connected? `mmm` records the call audio, and starts using a microphone as soon as
+you connect one.
 
 | Option | Effect |
 |---|---|

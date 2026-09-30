@@ -38,54 +38,62 @@ struct Record: AsyncParsableCommand {
 
     func run() async throws {
         let redaction = try minutes.redactionCategories()
-        var channels = Set(Channel.allCases)
-        if noMic || (replaying && replayRoom == nil) { channels.remove(.room) }
-        if noSystem || (replaying && replayRemote == nil) { channels.remove(.remote) }
-        if !replaying { channels = try Setup.prepare(channels) }
+        var requested = Set(Channel.allCases)
+        if noMic || (replaying && replayRoom == nil) { requested.remove(.room) }
+        if noSystem || (replaying && replayRemote == nil) { requested.remove(.remote) }
+        let channels = replaying ? requested : try Setup.prepare(requested)
+        // With no microphone yet, the room channel is set up anyway, and one connected later is used.
+        let awaitingMicrophone = requested.contains(.room) && !channels.contains(.room)
         let models = try loadModels()
         let session = try await MeetingSession(
             models: models,
             configuration: MeetingSession.Configuration(
-                channels: channels, echoCancellation: !noEchoCancel, redaction: redaction))
+                channels: requested, echoCancellation: !noEchoCancel, redaction: redaction))
 
-        let startDate = Date()
-        let origin = HostTime.now()
-        let outputURL = minutes.outputURL(startedAt: startDate)
         let live = LiveState()
+        let now = Date()
         live.update {
-            $0.title = minutes.title(startedAt: startDate)
-            $0.outputPath = outputURL.path
+            $0.title = minutes.title(startedAt: now)
+            $0.outputPath = minutes.outputURL(startedAt: now).path
             $0.redaction = !redaction.isEmpty
             $0.channels = channels
+            $0.awaitingMicrophone = awaitingMicrophone
             $0.look = skin
         }
         let echo = await session.echoCancellationEnabled
         live.update { $0.echoCancellation = echo }
+
+        // Recording begins when Space is pressed (at once when there's no screen to press it on).
+        // Until then the meters move, so you can check what's heard, but no audio goes anywhere,
+        // and the meeting's clock, file name and date all come from the moment it begins.
+        let clock = RecordingClock()
+        let begin: @Sendable () -> Void = {
+            guard clock.start() else { return }
+            let date = Date()
+            live.update {
+                $0.startedAt = date
+                $0.title = minutes.title(startedAt: date)
+                $0.outputPath = minutes.outputURL(startedAt: date).path
+            }
+        }
+        if !Terminal.isInteractive { begin() }
 
         // Audio flows capture callback -> feed -> session, in capture order, on one task.
         let (feed, feedInput) = AsyncStream.makeStream(of: (Channel, AudioChunk).self)
         let paused = PauseFlag()
         func deliver(_ channel: Channel) -> @Sendable ([Float], UInt64) -> Void {
             { samples, hostTime in
-                let chunk = AudioChunk(samples: samples, time: HostTime.seconds(from: origin, to: hostTime))
+                let time = clock.seconds(to: hostTime)
+                let chunk = AudioChunk(samples: samples, time: time ?? 0)
                 live.listen(channel, samples, level: chunk.rms)
-                if !paused.isPaused { feedInput.yield((channel, chunk)) }
+                if let time, time >= 0, !paused.isPaused { feedInput.yield((channel, chunk)) }
             }
         }
-
-        let (stops, stop) = AsyncStream.makeStream(of: Void.self)
-        var microphone: MicrophoneCapture?
-        var system: SystemAudioCapture?
-        var replay: Task<Void, any Error>?
-        if replaying {
-            replay = try startReplay(live: live, paused: paused, feed: feedInput, stop: stop)
-        }
-        // Start the microphone first: opening a Bluetooth headset's mic flips it to another profile,
-        // and a system tap built mid-switch can fail to deliver.
-        if channels.contains(.room) && !replaying {
+        let micDevice = micDevice
+        func makeMicrophone() -> MicrophoneCapture {
             var configuration = MicrophoneCapture.Configuration()
             configuration.inputDeviceUID = micDevice
-            let capture = MicrophoneCapture(
+            return MicrophoneCapture(
                 configuration: configuration,
                 onEvent: { event in
                     switch event {
@@ -98,9 +106,22 @@ struct Record: AsyncParsableCommand {
                     }
                 },
                 onSamples: deliver(.room))
+        }
+
+        let (stops, stop) = AsyncStream.makeStream(of: Void.self)
+        let microphone = MicrophoneSlot()
+        var system: SystemAudioCapture?
+        var replay: Task<Void, any Error>?
+        if replaying {
+            replay = try startReplay(live: live, clock: clock, paused: paused, feed: feedInput, stop: stop)
+        }
+        // Start the microphone first: opening a Bluetooth headset's mic flips it to another profile,
+        // and a system tap built mid-switch can fail to deliver.
+        if channels.contains(.room) && !replaying {
+            let capture = makeMicrophone()
             do {
                 try await capture.start()
-                microphone = capture
+                _ = microphone.put(capture)
             } catch MicrophoneCapture.CaptureError.permissionDenied {
                 try Setup.blocked(
                     "Mini Meeting Minutes isn't allowed to use the microphone.",
@@ -133,10 +154,43 @@ struct Record: AsyncParsableCommand {
                 try await capture.start()
                 system = capture
             } catch {
-                microphone?.stop()
+                microphone.close()
                 throw RecordError.capture("system audio", error)
             }
         }
+        // Watch for a microphone to be connected, and use it from then on.
+        let microphoneWatch: Task<Void, Never>? =
+            awaitingMicrophone
+            ? Task {
+                let asking = "A microphone was connected. Allow \(Setup.hostApp) to use it in the dialog."
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled, !AudioDevices.inputs().isEmpty else { continue }
+                    if AudioPermissions.microphoneStatus == .notDetermined { live.warn(asking) }
+                    let capture = makeMicrophone()
+                    do {
+                        try await capture.start()
+                    } catch MicrophoneCapture.CaptureError.permissionDenied {
+                        live.update {
+                            $0.warnings.removeAll { $0 == asking }
+                            $0.awaitingMicrophone = false
+                        }
+                        live.warn(
+                            "The microphone isn't allowed: turn on \(Setup.hostApp) in System Settings › Privacy & "
+                                + "Security › Microphone, then start again.")
+                        return
+                    } catch {
+                        continue  // not ready yet; try again in a moment
+                    }
+                    guard microphone.put(capture) else { return }
+                    live.update {
+                        $0.warnings.removeAll { $0 == asking }
+                        $0.channels.insert(.room)
+                        $0.awaitingMicrophone = false
+                    }
+                    return
+                }
+            } : nil
 
         let processing = Task {
             var failure: (any Error)?
@@ -152,11 +206,14 @@ struct Record: AsyncParsableCommand {
         let saving = Task {
             for await _ in saves {
                 let snapshot = live.snapshot
+                guard let startedAt = snapshot.startedAt else { continue }
                 let document = MinutesDocument(
-                    title: minutes.title(startedAt: startDate), startDate: startDate,
-                    duration: snapshot.elapsed, sources: snapshot.sources, redaction: redaction,
-                    echoCancellation: echo, turns: snapshot.turns, notes: snapshot.notes)
-                if (try? document.write(to: outputURL)) != nil { live.update { $0.savedAt = snapshot.elapsed } }
+                    title: snapshot.title, startDate: startedAt, duration: snapshot.elapsed, sources: snapshot.sources,
+                    redaction: redaction, echoCancellation: echo, turns: snapshot.turns, names: snapshot.names,
+                    notes: snapshot.notes)
+                if (try? document.write(to: URL(fileURLWithPath: snapshot.outputPath))) != nil {
+                    live.update { $0.savedAt = snapshot.elapsed }
+                }
             }
         }
         let updates = Task {
@@ -166,25 +223,41 @@ struct Record: AsyncParsableCommand {
             }
         }
 
-        // Show the live screen until q, Ctrl-C, or the end of a replay.
-        signal(SIGINT, SIG_IGN)
-        let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-        interrupt.setEventHandler { stop.yield() }
-        interrupt.resume()
-        defer {
-            interrupt.cancel()
-            signal(SIGINT, SIG_DFL)
+        // Show the live screen until q, Ctrl-C, or the end of a replay. Closing the window or
+        // ending the process stops the recording the same way, but then no one is there to name
+        // the speakers: the minutes are saved as they are.
+        let hungUp = Latch()
+        let signals = [SIGINT, SIGHUP, SIGTERM].map { number in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler {
+                if number != SIGINT { hungUp.raise() }
+                stop.yield()
+            }
+            source.resume()
+            return source
         }
-        let screen = LiveScreen.start(live: live, paused: paused, origin: origin, stop: stop, save: save)
+        defer {
+            for source in signals { source.cancel() }
+            for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_DFL) }
+        }
+        var screen = LiveScreen.start(
+            live: live, paused: paused, clock: clock, begin: begin, stop: stop, save: save)
         if screen == nil { Console.note("Recording. Press Ctrl-C to stop.") }
         for await _ in stops { break }
+        let unattended = hungUp.isRaised
+        if unattended, let closing = screen {
+            await closing.close()
+            screen = nil
+        }
         // A note still being typed (Ctrl-C, or the end of a replay) is kept, not lost.
         live.update { state in _ = state.addDraft() }
 
         // Stop capturing, let the pipeline drain, then relabel speakers across the whole meeting.
         // The screen stays up meanwhile and shows the final labels.
         live.update { $0.stopping = true }
-        microphone?.stop()
+        microphoneWatch?.cancel()
+        microphone.close()
         system?.stop()
         replay?.cancel()
         _ = await replay?.result
@@ -194,6 +267,13 @@ struct Record: AsyncParsableCommand {
         _ = await updates.value
         save.finish()
         await saving.value
+
+        guard let startedAt = live.snapshot.startedAt else {
+            // Stopped before recording began: there's nothing to save.
+            await screen?.close()
+            Console.note("Nothing was recorded.")
+            return
+        }
         let names = Self.carryNames(from: live.snapshot, to: turns)
         live.update {
             $0.turns = turns
@@ -203,7 +283,7 @@ struct Record: AsyncParsableCommand {
         }
 
         let speakers = MinutesDocument(
-            title: "", startDate: startDate, sources: [:], redaction: [], echoCancellation: false, turns: turns
+            title: "", startDate: startedAt, sources: [:], redaction: [], echoCancellation: false, turns: turns
         ).speakers
         if let screen {
             if !minutes.noNames && !speakers.isEmpty { await screen.askForNames(speakers) }
@@ -213,15 +293,17 @@ struct Record: AsyncParsableCommand {
         }
 
         let snapshot = live.snapshot
+        let outputURL = URL(fileURLWithPath: snapshot.outputPath)
         var document = MinutesDocument(
-            title: minutes.title(startedAt: startDate), startDate: startDate,
-            duration: HostTime.seconds(from: origin, to: HostTime.now()), sources: snapshot.sources,
-            redaction: redaction, echoCancellation: echo, turns: turns, names: snapshot.names, notes: snapshot.notes,
-            inProgress: false)
-        if screen == nil && !minutes.noNames { document.names = promptForNames(document) }
+            title: snapshot.title, startDate: startedAt, duration: clock.seconds(to: HostTime.now()) ?? 0,
+            sources: snapshot.sources, redaction: redaction, echoCancellation: echo, turns: turns,
+            names: snapshot.names, notes: snapshot.notes, inProgress: false)
+        if screen == nil && !unattended && !minutes.noNames { document.names = promptForNames(document) }
         try document.write(to: outputURL)
-        // Replays are automated (tests, the README demo): don't wait for a key.
-        Setup.finished(outputURL, turns: turns.count, speakers: document.speakers.count, offerToOpen: !replaying)
+        // Replays are automated (tests, the README demo): don't wait for a key. Nor when the
+        // window has gone.
+        Setup.finished(
+            outputURL, turns: turns.count, speakers: document.speakers.count, offerToOpen: !replaying && !unattended)
     }
 
     /// Names given during the meeting belong to live labels, which the final relabeling can
@@ -242,8 +324,8 @@ struct Record: AsyncParsableCommand {
     /// Plays the replay files through the live path in real time (times `replaySpeed`), then
     /// stops the recording.
     private func startReplay(
-        live: LiveState, paused: PauseFlag, feed: AsyncStream<(Channel, AudioChunk)>.Continuation,
-        stop: AsyncStream<Void>.Continuation
+        live: LiveState, clock: RecordingClock, paused: PauseFlag,
+        feed: AsyncStream<(Channel, AudioChunk)>.Continuation, stop: AsyncStream<Void>.Continuation
     ) throws -> Task<Void, any Error> {
         var readers: [(Channel, AudioFileReader)] = []
         for (channel, path) in [(Channel.room, replayRoom), (.remote, replayRemote)] {
@@ -256,6 +338,8 @@ struct Record: AsyncParsableCommand {
         let sources = UncheckedBox(readers)
         return Task {
             let readers = sources.value
+            // Like a live recording, a replay begins when recording does.
+            while !clock.started { try await Task.sleep(for: .milliseconds(20)) }
             var next = try readers.map { try $0.1.next() }
             let start = ContinuousClock.now
             while !Task.isCancelled {
@@ -286,6 +370,57 @@ enum RecordError: Error, CustomStringConvertible {
     }
 }
 
+/// When recording began, as a host time. Audio from before is heard (the meters move) but not
+/// recorded, and the meeting's times count from here.
+final class RecordingClock: Sendable {
+    private let origin = Atomic<UInt64>(0)
+
+    var started: Bool { origin.load(ordering: .acquiring) != 0 }
+
+    /// Starts the clock now. Returns false if it had already started.
+    func start() -> Bool {
+        origin.compareExchange(expected: 0, desired: HostTime.now(), ordering: .acquiringAndReleasing).exchanged
+    }
+
+    /// Seconds from the start to `hostTime` (negative before it), or nil if recording hasn't begun.
+    func seconds(to hostTime: UInt64) -> TimeInterval? {
+        let start = origin.load(ordering: .acquiring)
+        return start == 0 ? nil : HostTime.seconds(from: start, to: hostTime)
+    }
+}
+
+/// Holds the microphone capture, which may start after the rest (when a microphone is connected
+/// mid-meeting), so it's stopped with the rest. Once closed, a capture put in is stopped at once.
+final class MicrophoneSlot: Sendable {
+    private let state = Mutex<(capture: MicrophoneCapture?, closed: Bool)>((nil, false))
+
+    func put(_ capture: MicrophoneCapture) -> Bool {
+        let accepted = state.withLock { state in
+            guard !state.closed else { return false }
+            state.capture = capture
+            return true
+        }
+        if !accepted { capture.stop() }
+        return accepted
+    }
+
+    func close() {
+        let capture = state.withLock { state in
+            state.closed = true
+            defer { state.capture = nil }
+            return state.capture
+        }
+        capture?.stop()
+    }
+}
+
+/// A flag that, once raised, stays up.
+final class Latch: Sendable {
+    private let raised = Atomic<Bool>(false)
+    var isRaised: Bool { raised.load(ordering: .relaxed) }
+    func raise() { raised.store(true, ordering: .relaxed) }
+}
+
 /// Pausing drops captured audio before it reaches the pipeline.
 final class PauseFlag: Sendable {
     private let paused = Atomic<Bool>(false)
@@ -312,11 +447,11 @@ struct LiveScreen {
     let drawing: Task<Void, Never>
     let namesDone: AsyncStream<Void>
 
-    /// Takes over the terminal, or returns nil when it isn't interactive. `save` asks for the
-    /// minutes file to be rewritten, after a note is added.
+    /// Takes over the terminal, or returns nil when it isn't interactive. `begin` starts the
+    /// recording; `save` asks for the minutes file to be rewritten, after a note is added.
     static func start(
-        live: LiveState, paused: PauseFlag, origin: UInt64, stop: AsyncStream<Void>.Continuation,
-        save: AsyncStream<Void>.Continuation
+        live: LiveState, paused: PauseFlag, clock: RecordingClock, begin: @escaping @Sendable () -> Void,
+        stop: AsyncStream<Void>.Continuation, save: AsyncStream<Void>.Continuation
     ) -> LiveScreen? {
         guard Terminal.isInteractive else { return nil }
         let terminal = Terminal()
@@ -324,20 +459,23 @@ struct LiveScreen {
         let (namesDone, finishNaming) = AsyncStream.makeStream(of: Void.self)
         let keys = Task {
             for await key in terminal.keys() {
-                handle(key, live: live, paused: paused, stop: stop, save: save, finishNaming: finishNaming)
+                handle(
+                    key, live: live, paused: paused, begin: begin, stop: stop, save: save, finishNaming: finishNaming)
             }
         }
         let drawing = Task {
             let screen = Screen()
             let analyzers: [Channel: SpectrumAnalyzer] = [.room: SpectrumAnalyzer(), .remote: SpectrumAnalyzer()]
-            let clock = ContinuousClock()
-            let start = clock.now
+            let frames = ContinuousClock()
+            let start = frames.now
             var previous = start
             while !Task.isCancelled {
-                let now = clock.now
+                let now = frames.now
                 let interval = Self.seconds(now - previous)
                 previous = now
-                live.update { if !$0.stopping { $0.elapsed = HostTime.seconds(from: origin, to: HostTime.now()) } }
+                live.update {
+                    if !$0.stopping, let seconds = clock.seconds(to: HostTime.now()) { $0.elapsed = seconds }
+                }
                 let snapshot = live.snapshot
                 let size = terminal.size
                 let (canvas, maxScroll) = snapshot.look.render(
@@ -377,8 +515,9 @@ struct LiveScreen {
     // MARK: Input
 
     static func handle(
-        _ key: Key, live: LiveState, paused: PauseFlag, stop: AsyncStream<Void>.Continuation,
-        save: AsyncStream<Void>.Continuation, finishNaming: AsyncStream<Void>.Continuation
+        _ key: Key, live: LiveState, paused: PauseFlag, begin: @Sendable () -> Void,
+        stop: AsyncStream<Void>.Continuation, save: AsyncStream<Void>.Continuation,
+        finishNaming: AsyncStream<Void>.Continuation
     ) {
         let snapshot = live.snapshot
         if snapshot.naming != nil {
@@ -425,12 +564,16 @@ struct LiveScreen {
         case .stop:
             if !busy { stop.yield() }
         case .pause:
-            if !busy {
+            if !snapshot.started {
+                begin()
+            } else if !busy {
                 let nowPaused = paused.toggle()
                 live.update { $0.paused = nowPaused }
             }
         case .resume:
-            if !busy && paused.isPaused {
+            if !snapshot.started {
+                begin()
+            } else if !busy && paused.isPaused {
                 let nowPaused = paused.toggle()
                 live.update { $0.paused = nowPaused }
             }
@@ -443,7 +586,7 @@ struct LiveScreen {
                 if !speakers.isEmpty && !state.finished { state.naming = LiveState.Naming(speakers: speakers) }
             }
         case .note:
-            if !busy { live.update { if $0.draft == nil { $0.draft = LiveState.NoteDraft() } } }
+            if !busy && snapshot.started { live.update { if $0.draft == nil { $0.draft = LiveState.NoteDraft() } } }
         case .visualizer: live.update { $0.visualizer = $0.visualizer.next }
         case .skin: live.update { $0.look = $0.look.next }
         case .help: live.update { if $0.draft == nil { $0.help = true } }

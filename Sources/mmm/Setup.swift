@@ -23,7 +23,7 @@ enum Setup {
             guard channels.contains(.remote) else {
                 throw FriendlyError("This Mac has no microphone. Connect one, or record a call with `mmm --no-mic`.")
             }
-            print(Style.dim("No microphone found, so only your call audio will be recorded."))
+            print(Style.dim("No microphone found yet. Your call audio is recorded, and a microphone you connect is used too."))
             channels.remove(.room)
         }
         guard Terminal.isInteractive else { return channels }
