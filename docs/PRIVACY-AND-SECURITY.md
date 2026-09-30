@@ -181,8 +181,12 @@ this isn't legal advice.
   GitHub's size limits are checked when they're joined on first run, and `mmm doctor` checks every
   model file.
 - **Built on your Mac.** The installer downloads this repository from GitHub over HTTPS and builds
-  it with Apple's own compiler. It downloads no prebuilt binaries, except Apple's command line
-  developer tools, from Apple, if you don't have them. It never asks for an administrator password.
+  it with Apple's own compiler. It never asks for an administrator password. Two downloads aren't
+  source code:
+  - Apple's command line developer tools, from Apple, if you don't have them.
+  - A prebuilt text-normalization library that FluidAudio declares (NemoTextProcessing).
+    Apple's Swift package manager fetches it during the build and checks it against a pinned
+    checksum. The app switches that feature off, and none of the library's code ends up in it.
 
 ## Threat model
 
