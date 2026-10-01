@@ -21,6 +21,9 @@ import imageio_ffmpeg
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sound  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import terminal_render  # noqa: E402
 from record_demo import Emulator  # noqa: E402
@@ -101,7 +104,7 @@ class Timeline:
 
     def __init__(self, work, capture, grids, times):
         self.offset = RECORDING - capture["start"]
-        lines = json.loads((work / "timeline.json").read_text())
+        lines = json.loads((work / "timeline.json").read_text())["lines"]
         self.line = [(NARRATION + line["start"], NARRATION + line["end"]) for line in lines]
         # Keys: one badge for presses of the same key in quick succession.
         self.badges = []
@@ -670,10 +673,15 @@ def encode(job):
 
 
 def soundtrack(work, timeline, path):
-    """The narration, with its last line moved to the end card."""
+    """The narration (its last line moved to the end card), a music bed that dips under it, and small
+    sounds on what happens on screen."""
     with wave.open(str(work / "narration.wav"), "rb") as handle:
         rate = handle.getframerate()
-        voice = np.frombuffer(handle.readframes(handle.getnframes()), np.int16).astype(np.float32)
+        voice = np.frombuffer(handle.readframes(handle.getnframes()), np.int16).astype(np.float32) / 32768
+    if rate != sound.RATE:
+        from scipy.signal import resample_poly
+        voice = resample_poly(voice, sound.RATE, rate)
+        rate = sound.RATE
     closing = timeline.closing_line["start"]
     cut = int((closing - 1.2) * rate)  # in the pause before the last line
     track = np.zeros(int(timeline.duration * rate), np.float32)
@@ -681,12 +689,33 @@ def soundtrack(work, timeline, path):
         start = int(round(at * rate))
         end = min(len(track), start + len(clip))
         track[start:end] += clip[:end - start]
-    stereo = np.repeat(np.clip(track, -32768, 32767).astype(np.int16)[:, None], 2, axis=1)
+    saved = timeline.saved
+    events = [(1.0, "whoosh", {"seconds": 1.3, "gain": 0.7})]  # the window flies in
+    events += [(moment, "click", {}) for _, presses in timeline.badges for moment in presses]
+    events += [
+        (timeline.naming + 0.35, "typing", {"seconds": 0.9}),  # two names
+        (timeline.note_opened, "typing", {"seconds": max(0.3, timeline.note_added - timeline.note_opened)}),
+        (timeline.identified, "chime", {"note": 2}),  # the speakers, told apart
+        (saved + 1.15, "whoosh", {"seconds": 0.8}),  # the minutes slide in
+        (saved + 5.25, "chime", {"note": 4, "gain": 0.8}),  # the end card
+    ]
+    mixed = sound.mix(track, events)
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(2)
         handle.setsampwidth(2)
         handle.setframerate(rate)
-        handle.writeframes(stereo.tobytes())
+        handle.writeframes((np.clip(mixed, -1, 1) * 32767).astype(np.int16).tobytes())
+
+
+def loudness_filter(path):
+    """Two-pass EBU R128 normalization to -16 LUFS, peaks under -2 dBTP (the AAC encoder overshoots a
+    little): measure, then correct linearly."""
+    target = "loudnorm=I=-16:TP=-2:LRA=11"
+    report = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-nostats", "-i", str(path), "-af",
+                             f"{target}:print_format=json", "-f", "null", "-"], capture_output=True, text=True).stderr
+    m = json.loads(report[report.rindex("{"):report.rindex("}") + 1])
+    return (f"{target}:measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
+            f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true,aresample=48000")
 
 
 def render_video(work, out, workers):
@@ -706,7 +735,8 @@ def render_video(work, out, workers):
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-y", "-f", "concat", "-safe", "0",
                     "-i", str(listing), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
                     "-bsf:v", "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
-                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", str(out)], check=True)
+                    "-af", loudness_filter(audio), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                    "-shortest", str(out)], check=True)
     for path in [audio, listing, *parts]:
         path.unlink()
     return timeline.duration

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Makes the explainer video: two narrators (macOS voices) introduce Mini Meeting Minutes while the
-real app transcribes them, and a camera flies over its screen.
+"""Makes the explainer video: two narrators introduce Mini Meeting Minutes while the real app
+transcribes them, and a camera flies over its screen.
 
 Maintainer tool. The narration is played through `mmm record` in a pseudo-terminal, as the room
 microphone, with keys pressed on cue; every screen the app draws is captured, then composed into a
-1080p video with the narration as its soundtrack. The narration is synthetic speech in a temporary
-folder that's deleted afterwards (unless you keep the work folder).
+1080p video. The soundtrack is the narration over a quiet music bed, with a few sound effects,
+normalized to -16 LUFS. The narration is synthetic speech in a temporary folder that's deleted
+afterwards (unless you keep the work folder).
 
-Needs Pillow, NumPy and imageio-ffmpeg, and the Samantha and Daniel voices:
-    python3 -m venv /tmp/explainer-venv
-    /tmp/explainer-venv/bin/pip install pillow numpy imageio-ffmpeg
+Voices: Gemini through OpenRouter when OPENROUTER_API_KEY is set, else Kokoro-82M on this Mac (see
+narration.py). Kokoro needs Python 3.10 to 3.12; uv (https://docs.astral.sh/uv/) gets one:
+    uv venv --python 3.12 /tmp/explainer-venv
+    uv pip install --python /tmp/explainer-venv/bin/python kokoro soundfile scipy pillow numpy imageio-ffmpeg \
+        https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
     /tmp/explainer-venv/bin/python scripts/explainer/make.py      # ~/Movies/Mini Meeting Minutes explainer.mp4
 
 To adjust the look without recording again, keep the work folder, then compose from it:
@@ -44,6 +47,8 @@ def main():
     parser.add_argument("--still", type=float, nargs="+", metavar="SECONDS",
                         help="save stills of these moments in the work folder instead of a video")
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--voices", choices=["openrouter", "kokoro", "say"],
+                        help="who narrates (default: the best available)")
     arguments = parser.parse_args()
     if arguments.reuse and not arguments.work:
         parser.error("--reuse needs --work")
@@ -64,7 +69,7 @@ def main():
         started = time.monotonic()
         if not arguments.reuse:
             subprocess.run([str(ROOT / "mmm"), "--version"], check=True, capture_output=True)  # build first
-            lines = narration.speak(work)
+            lines = narration.speak(work, arguments.voices)
             print(f"narration: {len(lines)} lines, {lines[-1]['end']:.0f} s; capturing the app in real time…")
             capture.record(work, ROOT / "mmm")
         if arguments.still:

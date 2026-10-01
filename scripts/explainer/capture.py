@@ -17,7 +17,7 @@ COLUMNS, ROWS = 120, 42  # the size the Desktop shortcut opens Terminal at
 
 def record(work, app):
     """Replays `work`/narration.wav through `app` (the mmm launcher) and saves `work`/capture.pkl."""
-    lines = json.loads((work / "timeline.json").read_text())
+    lines = json.loads((work / "timeline.json").read_text())["lines"]
     minutes = work / "Minutes"
     minutes.mkdir(exist_ok=True)
     for old in minutes.glob("*.md"):

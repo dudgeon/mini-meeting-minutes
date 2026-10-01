@@ -83,22 +83,40 @@ python3 scripts/long_meeting_check.py --hours 0.5 --speed 4
 
 ## The explainer video
 
-`scripts/explainer/make.py` makes a one-minute 1080p explainer: two narrators (the Samantha and
-Daniel voices) take turns introducing the app while the real app transcribes them.
+`scripts/explainer/make.py` makes a one-minute 1080p explainer: two narrators, a woman and a man,
+take turns introducing the app while the real app transcribes them. It follows the approach of
+[reqs-as-theory-building](https://github.com/dudgeon/reqs-as-theory-building).
 
-1. `narration.py` speaks the script into one track.
-2. `capture.py` replays that track through `mmm` as the room microphone, in a pseudo-terminal. It
-   presses keys on cue (consent, naming, a note, stop) and timestamps everything the app draws.
-3. `compose.py` flies a 3D camera over the screen, drawn at 3× by `terminal_render.py`. It adds a
-   title, feature captions, the keys pressed, the saved minutes and an end card.
+1. **`narration.py` speaks the script.** It makes one text-to-speech call per line, trims each
+   line's silence and brings both voices to the same loudness. The voices, best first:
+   - **Gemini through OpenRouter** (`Sulafat` and `Achird`, with a direction for the delivery),
+     when `OPENROUTER_API_KEY` is set;
+   - **Kokoro-82M, on this Mac** (`af_heart` and `am_fenrir`). It's a small open model that
+     downloads once. Through the app's own recognizer, these two voices missed no words, and they
+     speak at the same pace, about 185 words a minute;
+   - **macOS `say`**, only if neither is available.
+2. **`capture.py` records the app.** It replays the narration through `mmm` as the room microphone,
+   in a pseudo-terminal, and presses keys on cue: consent, naming, a note, stop. Everything the app
+   draws is timestamped.
+3. **`compose.py` films the screen.** A 3D camera flies over the screen, drawn at 3× by
+   `terminal_render.py`. It adds a title, feature captions, the keys pressed, the saved minutes and
+   an end card.
+4. **`sound.py` makes the soundtrack.** A quiet chord bed dips under speech, with a few small
+   effects: key clicks, typing, a chime when the speakers are told apart, and whooshes. The mix is
+   normalized to −16 LUFS, with peaks under −2 dBTP.
 
 Every shot is anchored to a narration line, a key press, or something the app did, such as telling
 the speakers apart or saving. A new capture therefore lines up by itself. The synthetic speech lives
 in a temporary folder that's deleted afterwards.
 
+Kokoro needs Python 3.10 to 3.12; [uv](https://docs.astral.sh/uv/) fetches one:
+
 ```sh
-python3 -m venv /tmp/explainer-venv && /tmp/explainer-venv/bin/pip install pillow numpy imageio-ffmpeg
+uv venv --python 3.12 /tmp/explainer-venv
+uv pip install --python /tmp/explainer-venv/bin/python kokoro soundfile scipy pillow numpy imageio-ffmpeg \
+  https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 /tmp/explainer-venv/bin/python scripts/explainer/make.py      # ~/Movies/Mini Meeting Minutes explainer.mp4
+OPENROUTER_API_KEY=… /tmp/explainer-venv/bin/python scripts/explainer/make.py     # Gemini voices instead
 /tmp/explainer-venv/bin/python scripts/explainer/make.py --work /tmp/explainer     # keep the capture…
 /tmp/explainer-venv/bin/python scripts/explainer/make.py --work /tmp/explainer --reuse --still 21.9   # …to iterate
 ```
