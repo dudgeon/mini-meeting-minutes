@@ -1,0 +1,62 @@
+# Builds mmm for every push to main and publishes it as the `prebuilt` release, which install.sh
+# downloads, so most Macs need no developer tools. Pull requests are built but not published.
+#
+# The release holds two files:
+#   mmm-macos-arm64.tar.gz   mmm, its resource bundles, and COMMIT, the commit it was built from
+#   commit.txt               that commit, uploaded last; the installer downloads the source to match
+#
+# It isn't signed with a Developer ID or notarized. curl doesn't mark what it downloads as coming
+# from the internet, so Gatekeeper doesn't check it, as with a build made on the Mac itself.
+name: Prebuilt app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Pushes publish one at a time, in order, so the newest always ends up in the release.
+concurrency:
+  group: prebuilt-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          sudo xcode-select -s "$xcode"
+          swift --version
+
+      - name: Build
+        run: swift build -c release --disable-keychain
+
+      - name: Package
+        run: |
+          bin="$(swift build -c release --disable-keychain --show-bin-path)"
+          mkdir -p out/mmm
+          cp "$bin/mmm" out/mmm/
+          cp -R "$bin"/*.bundle out/mmm/
+          echo "$GITHUB_SHA" >out/mmm/COMMIT
+          tar -czf out/mmm-macos-arm64.tar.gz -C out/mmm .
+          echo "$GITHUB_SHA" >out/commit.txt
+          # It runs, and finds its models the way the launcher points it to them.
+          MMM_MODELS_DIR="$PWD/Models" out/mmm/mmm doctor
+
+      - name: Publish
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view prebuilt >/dev/null 2>&1 ||
+            gh release create prebuilt --prerelease --title "Prebuilt app" --target "$GITHUB_SHA" \
+              --notes "Downloaded by install.sh. Replaced on every push to main."
+          git push --force origin "$GITHUB_SHA:refs/tags/prebuilt"
+          gh release upload prebuilt out/mmm-macos-arm64.tar.gz --clobber
+          gh release upload prebuilt out/commit.txt --clobber

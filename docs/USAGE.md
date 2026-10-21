@@ -178,10 +178,14 @@ them.
 
 ## What the installer does
 
-1. **Checks.** It checks your Mac, and installs Apple's command line developer tools if they're
-   missing. They include Swift, which builds the app.
-2. **Downloads and builds.** It downloads this repository to `~/Applications/mini-meeting-minutes`,
-   builds it, and checks the speech models.
+1. **Checks.** It checks your Mac.
+2. **Downloads.** It downloads this repository to `~/Applications/mini-meeting-minutes`, and the
+   app, ready-built from it, from this repository's releases. Then it checks the speech models.
+   - **No developer tools needed.** Git is used when it works; otherwise the repository comes as an
+     archive.
+   - **Building instead.** If there's no ready-built app, the installer builds it with Apple's
+     developer tools. Where the command line tools are damaged, as a partly installed update can
+     leave them, it uses Xcode's Swift instead. With neither, it says how to get them.
 3. **Sets up.** It puts the **Mini Meeting Minutes** shortcut on your Desktop and the `mmm` command
    in `~/.local/bin`, adding that folder to your `PATH` in `~/.zprofile`.
 

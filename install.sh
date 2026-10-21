@@ -19,6 +19,16 @@ BIN_DIR="$HOME/.local/bin"
 SHORTCUT="$HOME/Desktop/Mini Meeting Minutes.command"
 LOG="$HOME/Library/Logs/mini-meeting-minutes-install.log"
 PATH_MARKER="# Added by the Mini Meeting Minutes installer"
+# Every push to main is built by .github/workflows/prebuilt.yml and published as a release, so
+# most Macs build nothing and need no developer tools. Without git, the source code comes as an
+# archive. Another repository or branch is built on this Mac.
+if [[ -z "${MMM_REPO:-}${MMM_BRANCH:-}" ]]; then
+  PREBUILT_URL="${MMM_PREBUILT_URL-https://github.com/dudgeon/mini-meeting-minutes/releases/download/prebuilt}"
+  ARCHIVE_URL="${MMM_ARCHIVE_URL-https://codeload.github.com/dudgeon/mini-meeting-minutes/tar.gz}"
+else
+  PREBUILT_URL="${MMM_PREBUILT_URL:-}"
+  ARCHIVE_URL="${MMM_ARCHIVE_URL:-}"
+fi
 
 if [[ -t 1 ]]; then
   B=$'\033[1m' G=$'\033[32m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m'
@@ -64,21 +74,113 @@ run() {
   fail "$1 didn't finish."
 }
 
-# Moves an earlier install to the newest version. Nothing in the app's folder is yours (minutes
-# live in Documents), so it's made to match the new version exactly: files an older build rewrote,
-# such as Package.resolved, can't block the update. Built files and joined models are kept. A
-# folder chosen with MMM_HOME may be someone's own copy, so it only ever moves forward.
+# Git comes with Apple's developer tools. Without them, /usr/bin/git only offers to install them.
+has_git() {
+  xcode-select -p >/dev/null 2>&1 && git --version >/dev/null 2>&1
+}
+
+# The version in the app's folder: its git commit, or the one an archive download recorded.
+version() {
+  if [[ -d "$APP_DIR/.git" ]]; then
+    git -C "$APP_DIR" rev-parse HEAD 2>/dev/null
+  else
+    cat "$APP_DIR/.mmm-version" 2>/dev/null
+  fi
+}
+
+# Downloads $target, the version the prebuilt app was built from (or the branch when there's none).
+clone() {
+  git init --quiet "$APP_DIR" &&
+    git -C "$APP_DIR" fetch --quiet --depth 1 "$REPO" "$target" &&
+    git -C "$APP_DIR" reset --quiet --hard FETCH_HEAD
+}
+
+# Moves an earlier install to $target. Nothing in the app's folder is yours (minutes live in
+# Documents), so it's made to match the new version exactly: files an older build rewrote, such as
+# Package.resolved, can't block the update. Built files and joined models are kept. A folder chosen
+# with MMM_HOME may be someone's own copy, so it only ever moves forward.
 update() {
   if [[ -f "$APP_DIR/.git/shallow" ]]; then
-    git -C "$APP_DIR" fetch --quiet --depth 1 "$REPO" "$BRANCH" || return
+    git -C "$APP_DIR" fetch --quiet --depth 1 "$REPO" "$target" || return
   else
-    git -C "$APP_DIR" fetch --quiet "$REPO" "$BRANCH" || return
+    git -C "$APP_DIR" fetch --quiet "$REPO" "$target" || return
   fi
   if [[ "$APP_DIR" == "$DEFAULT_APP_DIR" ]]; then
     git -C "$APP_DIR" reset --quiet --hard FETCH_HEAD
   else
     git -C "$APP_DIR" merge --quiet --ff-only FETCH_HEAD
   fi
+}
+
+# Without git, downloads $target as an archive and swaps it in, keeping built files.
+download() {
+  local new="$APP_DIR.new"
+  rm -rf "$new" && mkdir -p "$new" &&
+    curl -fsSL "$ARCHIVE_URL/$target" | tar -xzf - -C "$new" --strip-components 1 &&
+    printf '%s\n' "$target" >"$new/.mmm-version" || return
+  if [[ -d "$APP_DIR" ]]; then
+    [[ -d "$APP_DIR/.build" ]] && mv "$APP_DIR/.build" "$new/.build"
+    rm -rf "$APP_DIR"
+  fi
+  mv "$new" "$APP_DIR"
+}
+
+# Downloads the app built from exactly this version to where the ./mmm launcher looks for it.
+install_prebuilt() {
+  local dir="$APP_DIR/.build/prebuilt" new="$APP_DIR/.build/prebuilt.new" built
+  rm -rf "$new" && mkdir -p "$new" &&
+    curl -fsSL "$PREBUILT_URL/mmm-macos-arm64.tar.gz" | tar -xzf - -C "$new" || return
+  # A release that's being replaced can briefly have a newer app than its commit.txt says.
+  built="$(cat "$new/COMMIT" 2>/dev/null)"
+  if [[ "$built" != "$prebuilt" ]]; then
+    echo "The download was built from ${built:-an unknown version}, not $prebuilt."
+    return 1
+  fi
+  # Newer than every source file, so the launcher runs it instead of building.
+  find "$new" -exec touch {} + && rm -rf "$dir" && mv "$new" "$dir"
+}
+
+# Finds a Swift that can build the app: the selected developer tools, or else Xcode, through
+# DEVELOPER_DIR, which needs no administrator password. `swift --version` isn't enough of a check:
+# an update that only partly installed can leave `swift build` crashing as it starts.
+swift_ready=0
+via_xcode=0
+find_swift() {
+  # In subshells, so a crash is reported in the log rather than on screen.
+  if xcode-select -p >/dev/null 2>&1 && (swift build --version; exit) >>"$LOG" 2>&1; then
+    return
+  fi
+  local xcode
+  for xcode in /Applications/Xcode*.app/Contents/Developer; do
+    if [[ -d "$xcode" ]] && (DEVELOPER_DIR="$xcode" swift build --version; exit) >>"$LOG" 2>&1; then
+      export DEVELOPER_DIR="$xcode"
+      via_xcode=1
+      return
+    fi
+  done
+  return 1
+}
+
+require_swift() {
+  ((swift_ready)) && return
+  if ! find_swift; then
+    local tools
+    tools="$(xcode-select -p 2>/dev/null)"
+    if [[ "$tools" == /Library/Developer/CommandLineTools ]]; then
+      fail "Building it needs Apple's developer tools, and the ones on this Mac are damaged: part of an update didn't install. Install Xcode from the App Store and run this installer again, or ask whoever looks after this Mac to reinstall the command line developer tools."
+    elif [[ -n "$tools" ]]; then
+      fail "Building it needs Swift, and the one in $tools doesn't start. If you use Xcode, open it once so it can finish setting up, then run this installer again."
+    fi
+    fail "Building it needs Apple's developer tools. Run ${B}xcode-select --install${N}, or install Xcode from the App Store, then run this installer again."
+  fi
+  local swift_version swift_major swift_minor
+  swift_version="$(swift --version 2>/dev/null | sed -n 's/.*Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
+  swift_major="${swift_version%%.*}"
+  swift_minor="${swift_version#*.}"
+  if [[ -z "$swift_version" ]] || ((swift_major < 6 || (swift_major == 6 && swift_minor < 2))); then
+    fail "Your developer tools are too old (Swift ${swift_version:-unknown}; 6.2 or newer is needed). Install the Command Line Tools update in System Settings › General › Software Update, then try again."
+  fi
+  swift_ready=1
 }
 
 build() {
@@ -110,7 +212,7 @@ uninstall() {
 
 mkdir -p "$(dirname "$LOG")" && : >"$LOG"
 say "${B}Mini Meeting Minutes installer${N}"
-say "This takes about 10 minutes the first time. You can leave it running."
+say "This takes a few minutes the first time. You can leave it running."
 
 # 1. Check this Mac.
 [[ "$(uname -m)" == "arm64" ]] || fail "Mini Meeting Minutes needs a Mac with Apple silicon (M1 or newer)."
@@ -120,56 +222,73 @@ os_major="$(sw_vers -productVersion | cut -d. -f1)"
 free_gb="$(df -g "$HOME" | awk 'NR == 2 { print $4 }')"
 [[ "$free_gb" -ge 3 ]] || fail "It needs about 3 GB of free disk space, and this Mac has ${free_gb} GB."
 
-# 2. Apple's command line developer tools include Swift, which builds the app.
-if ! xcode-select -p >/dev/null 2>&1; then
-  step "Installing Apple's developer tools"
-  say "  A window will ask to install the command line developer tools."
-  say "  Click ${B}Install${N}, then ${B}Agree${N}. It takes 5 to 15 minutes; this installer continues by itself."
-  xcode-select --install </dev/null >/dev/null 2>&1
-  until xcode-select -p >/dev/null 2>&1; do sleep 5; done
-  say "  ${G}✓${N} Developer tools installed"
+# 2. Find the newest prebuilt app. Without one, it's built here, which needs Apple's developer
+# tools: check for them before downloading anything.
+step "Getting Mini Meeting Minutes"
+prebuilt=""
+if [[ -n "$PREBUILT_URL" ]]; then
+  prebuilt="$(curl -fsSL "$PREBUILT_URL/commit.txt" 2>>"$LOG" | tr -d '[:space:]')"
+  [[ "$prebuilt" =~ ^[0-9a-f]{40}$ ]] || prebuilt=""
 fi
-swift_version="$(swift --version 2>/dev/null | sed -n 's/.*Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
-[[ -n "$swift_version" ]] ||
-  fail "Swift isn't working. If you use Xcode, open it once so it can finish setting up, then try again."
-swift_major="${swift_version%%.*}"
-swift_minor="${swift_version#*.}"
-if ((swift_major < 6 || (swift_major == 6 && swift_minor < 2))); then
-  fail "Your developer tools are too old (Swift $swift_version; 6.2 or newer is needed). Install the Command Line Tools update in System Settings › General › Software Update, then try again."
-fi
+[[ -n "$prebuilt" ]] || require_swift
+target="${prebuilt:-$BRANCH}"
 
 # 3. Download, or update an earlier install.
-step "Getting Mini Meeting Minutes"
-if [[ -d "$APP_DIR/.git" ]]; then
-  # A folder chosen with MMM_HOME may be someone's own copy: don't overwrite their changes.
-  if [[ "$APP_DIR" != "$DEFAULT_APP_DIR" && -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]]; then
-    fail "$APP_DIR has changes of its own, so it wasn't updated. Commit or discard them, then try again."
-  fi
+if [[ -d "$APP_DIR/.git" || -f "$APP_DIR/.mmm-version" ]]; then
   if pgrep -xq mmm; then
     say "  Mini Meeting Minutes is open. It's fine to carry on: the update is used the next time it starts."
   fi
-  before="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  run "Downloading the update" update
-  after="$(git -C "$APP_DIR" rev-parse --short HEAD)"
+  before="$(version | cut -c 1-7)"
+  if [[ -d "$APP_DIR/.git" ]] && has_git; then
+    # A folder chosen with MMM_HOME may be someone's own copy: don't overwrite their changes.
+    if [[ "$APP_DIR" != "$DEFAULT_APP_DIR" && -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]]; then
+      fail "$APP_DIR has changes of its own, so it wasn't updated. Commit or discard them, then try again."
+    fi
+    run "Downloading the update" update
+  elif [[ "$APP_DIR" == "$DEFAULT_APP_DIR" && -n "$ARCHIVE_URL" ]]; then
+    run "Downloading the update (about 270 MB)" download
+  else
+    fail "Updating $APP_DIR needs git, which comes with Apple's developer tools. Run ${B}xcode-select --install${N}, then try again."
+  fi
+  after="$(version | cut -c 1-7)"
   if [[ "$before" == "$after" ]]; then
     say "  ${D}Already the newest version ($after).${N}"
   else
-    say "  ${D}Updated from $before to $after.${N}"
+    say "  ${D}Updated from ${before:-unknown} to $after.${N}"
   fi
 elif [[ -e "$APP_DIR" ]]; then
   fail "$APP_DIR already exists but isn't a Mini Meeting Minutes install. Move it away and try again."
 else
   mkdir -p "$(dirname "$APP_DIR")" || fail "Couldn't create $(dirname "$APP_DIR")."
-  run "Downloading (about 270 MB)" git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
+  if has_git; then
+    run "Downloading (about 270 MB)" clone
+  elif [[ -n "$ARCHIVE_URL" ]]; then
+    run "Downloading (about 270 MB)" download
+  else
+    fail "Downloading from $REPO needs git, which comes with Apple's developer tools. Run ${B}xcode-select --install${N}, then try again."
+  fi
 fi
 
 # Use the same resolved path as the ./mmm launcher, or SwiftPM sees two packages and rebuilds.
 APP_DIR="$(cd -P "$APP_DIR" && pwd)"
 
-# 4. Build it and check the speech models.
-if ! attempt "Building (3 to 5 minutes the first time)" build; then
-  say "  ${D}Trying again from scratch…${N}"
-  run "Building from scratch (3 to 5 minutes)" build_from_scratch
+# 4. Get the app prebuilt, or build it here, then check the speech models.
+have_app=0
+if [[ -n "$prebuilt" && "$(version)" == "$prebuilt" ]]; then
+  if attempt "Downloading the app" install_prebuilt; then
+    have_app=1
+  else
+    say "  ${D}Building it on this Mac instead…${N}"
+  fi
+fi
+if ((!have_app)); then
+  require_swift
+  ((via_xcode)) && say "  ${D}Building with Xcode, since the command line developer tools don't work.${N}"
+  rm -rf "$APP_DIR/.build/prebuilt"
+  if ! attempt "Building (3 to 5 minutes the first time)" build; then
+    say "  ${D}Trying again from scratch…${N}"
+    run "Building from scratch (3 to 5 minutes)" build_from_scratch
+  fi
 fi
 run "Checking the speech models" "$APP_DIR/mmm" doctor --full
 
