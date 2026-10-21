@@ -1,12 +1,14 @@
 # Builds mmm for every push to main and publishes it as the `prebuilt` release, which install.sh
-# downloads, so most Macs need no developer tools. Pull requests are built but not published.
+# downloads, so most Macs need no developer tools. Pull requests are built and checked, not published.
 #
-# The release holds two files:
-#   mmm-macos-arm64.tar.gz   mmm, its resource bundles, and COMMIT, the commit it was built from
-#   commit.txt               that commit, uploaded last; the installer downloads the source to match
+# The release holds:
+#   mmm-<commit>.tar.gz   mmm, its resource bundles, and COMMIT; the newest few are kept, so an
+#                         installer that has just read commit.txt still finds its download
+#   commit.txt            the newest commit, uploaded after its tarball
 #
 # It isn't signed with a Developer ID or notarized. curl doesn't mark what it downloads as coming
-# from the internet, so Gatekeeper doesn't check it, as with a build made on the Mac itself.
+# from the internet, so Gatekeeper doesn't check it, as with a build made on the Mac itself. Each
+# tarball has a build attestation: `gh attestation verify <file> --repo dudgeon/mini-meeting-minutes`.
 name: Prebuilt app
 
 on:
@@ -20,17 +22,18 @@ concurrency:
   group: prebuilt-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-26
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Use the newest Xcode
+      - name: Use the newest released Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          xcode="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|_rc' | sort -V | tail -n 1)"
           sudo xcode-select -s "$xcode"
           swift --version
 
@@ -44,19 +47,75 @@ jobs:
           cp "$bin/mmm" out/mmm/
           cp -R "$bin"/*.bundle out/mmm/
           echo "$GITHUB_SHA" >out/mmm/COMMIT
-          tar -czf out/mmm-macos-arm64.tar.gz -C out/mmm .
+          tar -czf "out/mmm-$GITHUB_SHA.tar.gz" -C out/mmm .
           echo "$GITHUB_SHA" >out/commit.txt
-          # It runs, and finds its models the way the launcher points it to them.
-          MMM_MODELS_DIR="$PWD/Models" out/mmm/mmm doctor
+          rm -rf out/mmm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt
+          path: out/
+
+  # The app supports macOS 15, so the packaged build is checked there as well as on the newest.
+  check:
+    needs: build
+    strategy:
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: Models
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: prebuilt
+          path: out
+
+      # The launcher points it at the models this way. Permissions on the runner don't matter here,
+      # only that the models check out and load.
+      - name: Load the models
+        run: |
+          mkdir app && tar -xzf "out/mmm-$GITHUB_SHA.tar.gz" -C app
+          report="$(MMM_MODELS_DIR="$PWD/Models" app/mmm doctor --full || true)"
+          echo "$report"
+          if grep -q "✗ Model" <<<"$report" || ! grep -q "✓ Models load" <<<"$report"; then
+            exit 1
+          fi
+
+  publish:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: prebuilt
+          path: out
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: out/mmm-${{ github.sha }}.tar.gz
 
       - name: Publish
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view prebuilt >/dev/null 2>&1 ||
+          if gh release view prebuilt >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/prebuilt" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
             gh release create prebuilt --prerelease --title "Prebuilt app" --target "$GITHUB_SHA" \
               --notes "Downloaded by install.sh. Replaced on every push to main."
-          git push --force origin "$GITHUB_SHA:refs/tags/prebuilt"
-          gh release upload prebuilt out/mmm-macos-arm64.tar.gz --clobber
+          fi
+          gh release upload prebuilt "out/mmm-$GITHUB_SHA.tar.gz" --clobber
           gh release upload prebuilt out/commit.txt --clobber
+          # Keep the five newest builds.
+          gh release view prebuilt --json assets \
+            --jq '[.assets[] | select(.name | startswith("mmm-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].name' |
+            while read -r old; do gh release delete-asset prebuilt "$old" --yes; done

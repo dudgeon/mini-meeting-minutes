@@ -34,7 +34,12 @@ if ! bin_dir="$(xcode-select -p >/dev/null 2>&1 && "${build[@]}" --show-bin-path
     fi
     bin_dir=""
   done
-  if [[ -z "$bin_dir" ]]; then
+  if [[ -z "$bin_dir" && -x "$prebuilt" ]]; then
+    echo "The sources changed, and there are no working developer tools to rebuild mmm, so the" >&2
+    echo "prebuilt one runs. Run the installer again to bring it up to date." >&2
+    export MMM_MODELS_DIR="${MMM_MODELS_DIR:-$root/Models}"
+    exec "$prebuilt" "$@"
+  elif [[ -z "$bin_dir" ]]; then
     echo "mmm needs building, which needs Apple's developer tools, and none that work were found." >&2
     echo "Run the installer again to download it prebuilt." >&2
     exit 1

@@ -15,6 +15,7 @@ REPO="${MMM_REPO:-https://github.com/dudgeon/mini-meeting-minutes.git}"
 BRANCH="${MMM_BRANCH:-main}"
 DEFAULT_APP_DIR="$HOME/Applications/mini-meeting-minutes"
 APP_DIR="${MMM_HOME:-$DEFAULT_APP_DIR}"
+APP_DIR="${APP_DIR%/}"
 BIN_DIR="$HOME/.local/bin"
 SHORTCUT="$HOME/Desktop/Mini Meeting Minutes.command"
 LOG="$HOME/Library/Logs/mini-meeting-minutes-install.log"
@@ -82,7 +83,7 @@ has_git() {
 # The version in the app's folder: its git commit, or the one an archive download recorded.
 version() {
   if [[ -d "$APP_DIR/.git" ]]; then
-    git -C "$APP_DIR" rev-parse HEAD 2>/dev/null
+    has_git && git -C "$APP_DIR" rev-parse HEAD 2>/dev/null
   else
     cat "$APP_DIR/.mmm-version" 2>/dev/null
   fi
@@ -116,7 +117,7 @@ update() {
 download() {
   local new="$APP_DIR.new"
   rm -rf "$new" && mkdir -p "$new" &&
-    curl -fsSL "$ARCHIVE_URL/$target" | tar -xzf - -C "$new" --strip-components 1 &&
+    curl -fsSL --retry 3 "$ARCHIVE_URL/$target" | tar -xzf - -C "$new" --strip-components 1 &&
     printf '%s\n' "$target" >"$new/.mmm-version" || return
   if [[ -d "$APP_DIR" ]]; then
     [[ -d "$APP_DIR/.build" ]] && mv "$APP_DIR/.build" "$new/.build"
@@ -125,19 +126,28 @@ download() {
   mv "$new" "$APP_DIR"
 }
 
-# Downloads the app built from exactly this version to where the ./mmm launcher looks for it.
-install_prebuilt() {
-  local dir="$APP_DIR/.build/prebuilt" new="$APP_DIR/.build/prebuilt.new" built
-  rm -rf "$new" && mkdir -p "$new" &&
-    curl -fsSL "$PREBUILT_URL/mmm-macos-arm64.tar.gz" | tar -xzf - -C "$new" || return
-  # A release that's being replaced can briefly have a newer app than its commit.txt says.
-  built="$(cat "$new/COMMIT" 2>/dev/null)"
+# Downloads the prebuilt app into $staged, before the source is touched: if that fails, an
+# earlier install is left as it was.
+stage_prebuilt() {
+  local built
+  curl -fsSL --retry 3 "$PREBUILT_URL/mmm-$prebuilt.tar.gz" | tar -xzf - -C "$staged" || return
+  built="$(cat "$staged/COMMIT" 2>/dev/null)"
   if [[ "$built" != "$prebuilt" ]]; then
     echo "The download was built from ${built:-an unknown version}, not $prebuilt."
     return 1
   fi
-  # Newer than every source file, so the launcher runs it instead of building.
-  find "$new" -exec touch {} + && rm -rf "$dir" && mv "$new" "$dir"
+}
+
+# Moves the staged app to where the ./mmm launcher looks for it. The installer's own folder has
+# no use for an earlier build any more, which can take a few GB.
+install_prebuilt() {
+  local dir="$APP_DIR/.build/prebuilt"
+  if [[ "$APP_DIR" == "$DEFAULT_APP_DIR" ]]; then
+    rm -rf "$APP_DIR/.build"
+  fi
+  mkdir -p "$APP_DIR/.build" && rm -rf "$dir" && mv "$staged" "$dir" &&
+    # Newer than every source file, so the launcher runs it instead of building.
+    find "$dir" -exec touch {} +
 }
 
 # Finds a Swift that can build the app: the selected developer tools, or else Xcode, through
@@ -166,7 +176,9 @@ require_swift() {
   if ! find_swift; then
     local tools
     tools="$(xcode-select -p 2>/dev/null)"
-    if [[ "$tools" == /Library/Developer/CommandLineTools ]]; then
+    if [[ -d /Applications/Xcode.app ]]; then
+      fail "Building it needs Swift, and neither the command line developer tools nor Xcode's start. Open Xcode once, so it can finish setting up and you can accept its license, then run this installer again."
+    elif [[ "$tools" == /Library/Developer/CommandLineTools ]]; then
       fail "Building it needs Apple's developer tools, and the ones on this Mac are damaged: part of an update didn't install. Install Xcode from the App Store and run this installer again, or ask whoever looks after this Mac to reinstall the command line developer tools."
     elif [[ -n "$tools" ]]; then
       fail "Building it needs Swift, and the one in $tools doesn't start. If you use Xcode, open it once so it can finish setting up, then run this installer again."
@@ -222,13 +234,21 @@ os_major="$(sw_vers -productVersion | cut -d. -f1)"
 free_gb="$(df -g "$HOME" | awk 'NR == 2 { print $4 }')"
 [[ "$free_gb" -ge 3 ]] || fail "It needs about 3 GB of free disk space, and this Mac has ${free_gb} GB."
 
-# 2. Find the newest prebuilt app. Without one, it's built here, which needs Apple's developer
-# tools: check for them before downloading anything.
+# 2. Get the newest prebuilt app. Without one, it's built here, which needs Apple's developer
+# tools: check for them before downloading anything else.
 step "Getting Mini Meeting Minutes"
 prebuilt=""
 if [[ -n "$PREBUILT_URL" ]]; then
-  prebuilt="$(curl -fsSL "$PREBUILT_URL/commit.txt" 2>>"$LOG" | tr -d '[:space:]')"
+  prebuilt="$(curl -fsSL --retry 3 "$PREBUILT_URL/commit.txt" 2>>"$LOG" | tr -d '[:space:]')"
   [[ "$prebuilt" =~ ^[0-9a-f]{40}$ ]] || prebuilt=""
+fi
+if [[ -n "$prebuilt" ]]; then
+  staged="$(mktemp -d "${TMPDIR:-/tmp}/mmm-prebuilt.XXXXXX")" || fail "Couldn't make a temporary folder."
+  trap 'rm -rf "$staged"' EXIT
+  if ! attempt "Downloading the app" stage_prebuilt; then
+    say "  ${D}It will be built on this Mac instead.${N}"
+    prebuilt=""
+  fi
 fi
 [[ -n "$prebuilt" ]] || require_swift
 target="${prebuilt:-$BRANCH}"
@@ -272,16 +292,11 @@ fi
 # Use the same resolved path as the ./mmm launcher, or SwiftPM sees two packages and rebuilds.
 APP_DIR="$(cd -P "$APP_DIR" && pwd)"
 
-# 4. Get the app prebuilt, or build it here, then check the speech models.
-have_app=0
+# 4. Put the prebuilt app in place, or build it here, then check the speech models. A folder
+# chosen with MMM_HOME can be ahead of the prebuilt app, and is built.
 if [[ -n "$prebuilt" && "$(version)" == "$prebuilt" ]]; then
-  if attempt "Downloading the app" install_prebuilt; then
-    have_app=1
-  else
-    say "  ${D}Building it on this Mac instead…${N}"
-  fi
-fi
-if ((!have_app)); then
+  install_prebuilt || fail "Couldn't put the app in $APP_DIR/.build."
+else
   require_swift
   ((via_xcode)) && say "  ${D}Building with Xcode, since the command line developer tools don't work.${N}"
   rm -rf "$APP_DIR/.build/prebuilt"

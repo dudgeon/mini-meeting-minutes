@@ -19,5 +19,5 @@ Especially welcome:
 
 ## Supported versions
 
-Fixes go into the `main` branch. To pick them up, run the install line again: it updates your copy
-and rebuilds it.
+Fixes go into the `main` branch, and GitHub Actions publishes a new prebuilt app a few minutes
+later. To pick them up, run the install line again: it updates your copy to that version.
