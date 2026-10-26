@@ -11,7 +11,8 @@ python3 scripts/e2e_check.py                   # a synthetic call through the wh
 MMM_DEBUG=1 ./mmm transcribe --room a.wav      # diagnostics: utterances (unredacted), windows, timings
 ```
 
-- **Rebuilding.** `./mmm` rebuilds itself whenever the sources change.
+- **Rebuilding.** `./mmm` rebuilds itself whenever the sources change. An install has a prebuilt
+  `mmm` in `.build/prebuilt`, which it runs until the sources there change.
 - **`--disable-keychain`** stops SwiftPM blocking on a keychain prompt while it fetches packages.
 - **Testing with only the Command Line Tools.** `swift test` needs the testing plugin's path:
   `swift test --disable-keychain -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`.
@@ -48,7 +49,9 @@ These hidden options feed files through exactly what a live recording uses, scre
 without touching capture devices or permissions. Press **Space**, then **Y**, to start, as in a
 real meeting.
 
-The installer honors `MMM_REPO`, `MMM_BRANCH` and `MMM_HOME` for testing.
+The installer honors `MMM_REPO`, `MMM_BRANCH` and `MMM_HOME` for testing. Setting either of the
+first two builds on the Mac, unless `MMM_PREBUILT_URL` points at a release (a `file://` folder
+works); `MMM_ARCHIVE_URL` does the same for the source archive used without git.
 
 ## The README animation
 
@@ -143,7 +146,7 @@ OPENROUTER_API_KEY=… /tmp/explainer-venv/bin/python scripts/explainer/make.py 
 | `Sources/mmm/Screen/` | The screen: the sidebar and synthwave looks, drawing, visualizers and input |
 | `Models/` | Vendored Core ML models; see [Models/README.md](../Models/README.md) |
 | `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (the end-to-end check), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
+| `scripts/` | `e2e_check.py` (the end-to-end check), `publish-prebuilt.sh` (builds main and publishes the prebuilt app the installer downloads; run it after pushing) with `check-prebuilt.sh`, plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.

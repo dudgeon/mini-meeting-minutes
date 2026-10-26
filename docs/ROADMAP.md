@@ -67,9 +67,10 @@ On an M1 MacBook Air with 8 GB, on battery, during a video call:
 
 ## A prebuilt, signed app (paused)
 
-Today the installer builds the app on each Mac, which needs Apple's developer tools and a few
-minutes. Shipping it prebuilt, in a disk image, would take installing down to about a minute. It's
-on hold; this is what it would take.
+Today the installer downloads `mmm` prebuilt by `scripts/publish-prebuilt.sh`, unsigned, which
+works because curl doesn't mark downloads as coming from the internet. A signed app would also
+open from a browser download, in a disk image, and could have permissions of its own. It's on
+hold; this is what it would take.
 
 **What Apple requires**
 

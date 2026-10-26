@@ -53,8 +53,8 @@ I can help with that. You can also call me at 415-555-0132 if anything is unclea
 
 ## Install
 
-You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Installing takes about
-10 minutes, once.
+You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Installing takes a few
+minutes, once, and no administrator password.
 
 1. Open **Terminal**: press **⌘ Space**, type **Terminal**, and press **Return**.
 2. Copy this line, paste it into Terminal with **⌘ V**, and press **Return**:
@@ -63,9 +63,7 @@ You need a Mac with Apple silicon (M1 or newer) running macOS 15 or newer. Insta
    curl -fsSL https://raw.githubusercontent.com/dudgeon/mini-meeting-minutes/main/install.sh | bash
    ```
 
-3. If a window asks to install the **command line developer tools**, click **Install**, then
-   **Agree**. The installer waits for them and carries on by itself.
-4. When Terminal says **All set!**, you're done. You can close Terminal.
+3. When Terminal says **All set!**, you're done. You can close Terminal.
 
 ## Record a meeting
 

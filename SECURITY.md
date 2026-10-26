@@ -19,5 +19,5 @@ Especially welcome:
 
 ## Supported versions
 
-Fixes go into the `main` branch. To pick them up, run the install line again: it updates your copy
-and rebuilds it.
+Fixes go into the `main` branch and are published as a new prebuilt app. To pick them up, run the
+install line again: it updates your copy to that version.

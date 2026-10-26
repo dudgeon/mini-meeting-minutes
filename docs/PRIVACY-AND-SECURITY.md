@@ -45,9 +45,9 @@ services.
 **Network.** At runtime the app makes no network requests. Its code contains no networking, and it
 turns off the model downloader in FluidAudio, the speech toolkit it's built on
 (`ModelHub.offlineMode = true` in `Sources/MinutesCore/Models/ModelLoader.swift`). Only installing
-and building need the internet: to download this repository from GitHub and its Swift packages. If
-you want to see for yourself, a firewall such as LuLu or Little Snitch, or macOS's `nettop`, will
-show that `mmm` opens no connections.
+needs the internet: to download this repository and the ready-built app from GitHub, or the Swift
+packages when it's built on your Mac. If you want to see for yourself, a firewall such as LuLu or
+Little Snitch, or macOS's `nettop`, will show that `mmm` opens no connections.
 
 ## What's kept, where, and for how long
 
@@ -195,13 +195,17 @@ Check with your risk advisors before using it.
 - **Checked models.** The models come with a manifest of SHA-256 checksums. Files split to fit
   GitHub's size limits are checked when they're joined on first run, and `mmm doctor` checks every
   model file.
-- **Built on your Mac.** The installer downloads this repository from GitHub over HTTPS and builds
-  it with Apple's own compiler. It never asks for an administrator password. Two downloads aren't
-  source code:
-  - Apple's command line developer tools, from Apple, if you don't have them.
-  - A prebuilt text-normalization library that FluidAudio declares (NemoTextProcessing).
-    Apple's Swift package manager fetches it during the build and checks it against a pinned
-    checksum. The app switches that feature off, and none of the library's code ends up in it.
+- **Built in the open.** The installer downloads this repository from GitHub over HTTPS. It never
+  asks for an administrator password. Two downloads aren't source code:
+  - The app itself, built from that same commit by the maintainer with
+    `scripts/publish-prebuilt.sh` and published as the `prebuilt` release.
+    - It isn't signed with a Developer ID or notarized. Like a build made on your Mac, it runs
+      because it wasn't downloaded by a browser.
+    - To build it yourself instead, clone the repository and run `./mmm`.
+  - When it's built on your Mac (for another branch, say): a prebuilt text-normalization library
+    that FluidAudio declares (NemoTextProcessing). Apple's Swift package manager fetches it during
+    the build and checks it against a pinned checksum. The app switches that feature off, and none
+    of the library's code ends up in it.
 
 ## Threat model
 
