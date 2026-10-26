@@ -51,41 +51,35 @@ jobs:
           echo "$GITHUB_SHA" >out/commit.txt
           rm -rf out/mmm
 
+      - name: Load the models
+        run: scripts/check-prebuilt.sh "out/mmm-$GITHUB_SHA.tar.gz"
+
       - uses: actions/upload-artifact@v4
         with:
           name: prebuilt
           path: out/
 
-  # The app supports macOS 15, so the packaged build is checked there as well as on the newest.
-  check:
+  # The app supports macOS 15, so the packaged build is checked there too.
+  check-macos-15:
     needs: build
-    strategy:
-      matrix:
-        os: [macos-15, macos-26]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
         with:
-          sparse-checkout: Models
+          sparse-checkout: |
+            Models
+            scripts
 
       - uses: actions/download-artifact@v4
         with:
           name: prebuilt
           path: out
 
-      # The launcher points it at the models this way. Permissions on the runner don't matter here,
-      # only that the models check out and load.
       - name: Load the models
-        run: |
-          mkdir app && tar -xzf "out/mmm-$GITHUB_SHA.tar.gz" -C app
-          report="$(MMM_MODELS_DIR="$PWD/Models" app/mmm doctor --full || true)"
-          echo "$report"
-          if grep -q "✗ Model" <<<"$report" || ! grep -q "✓ Models load" <<<"$report"; then
-            exit 1
-          fi
+        run: scripts/check-prebuilt.sh "out/mmm-$GITHUB_SHA.tar.gz"
 
   publish:
-    needs: check
+    needs: check-macos-15
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
