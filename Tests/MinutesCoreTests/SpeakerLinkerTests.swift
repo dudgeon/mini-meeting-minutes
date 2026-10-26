@@ -64,8 +64,8 @@ import Testing
     @Test func keepsSimilarVoicesApart() {
         var voices = Voices()
         let first = voices.voice()
-        // Like two similar synthetic voices measured at about 0.5 cosine similarity.
-        let second = voices.voice(near: first, similarity: 0.5)
+        // As close as two different people's voices typically are in the AMI meetings.
+        let second = voices.voice(near: first, similarity: 0.3)
         let windows: [[Say]] = [[(0, 0, 7), (0, 8, 6), (1, 15, 8)], [(1, 31, 6), (0, 38, 6)]]
         let result = run(windows, voices: [first, second])
         #expect(result.final == [[1, 1, 2], [2, 1]])
@@ -91,7 +91,8 @@ import Testing
     @Test func mergesASpeakerSplitByANoisyStart() {
         var voices = Voices()
         let person = voices.voice()
-        let stranger = voices.voice(near: person, similarity: 0.55)
+        // Under `link`, so it opens a speaker of its own, but over `weakLink`, so it can be folded.
+        let stranger = voices.voice(near: person, similarity: 0.35)
         var linker = SpeakerLinker(channel: .room)
         var generator = Voices(generator: SeededGenerator(seed: 3))
         // A first segment that sounds unlike the rest (noise, a cough) opens its own speaker...

@@ -10,7 +10,11 @@ import Foundation
 /// segments, folding stray fragments) so later evidence can correct early guesses.
 ///
 /// The thresholds lean toward splitting: one person under two labels is recoverable (give both
-/// the same name), two people under one label is not.
+/// the same name), two people under one label is not. They're tuned on real meetings with known
+/// speakers (five AMI corpus meetings, with `scripts/speaker_eval.py`). There, a segment's voice
+/// matches its own speaker's at about 0.8, the closest other speaker's at about 0.3, and two
+/// people's average voices at 0.52 at most. Looser and two similar voices merge; stricter and one
+/// person splits into many (with 0.6 to link, a 36-minute meeting of four people had 44 live labels).
 public struct SpeakerLinker: Sendable {
     /// A stretch of one speaker's speech inside a window.
     public struct Segment: Sendable {
@@ -33,16 +37,16 @@ public struct SpeakerLinker: Sendable {
 
     public struct Thresholds: Sendable {
         /// Cosine similarity a segment needs to join an existing speaker.
-        public var link: Float = 0.6
+        public var link: Float = 0.45
         /// ...when the segment is shorter than `shortSpeechSeconds` (noisier embedding).
-        public var weakLink: Float = 0.45
+        public var weakLink: Float = 0.3
         public var shortSpeechSeconds: Double = 2.0
         /// ...when the diarizer put a different local speaker in that cluster in the same window.
-        public var otherLocalLink: Float = 0.7
+        public var otherLocalLink: Float = 0.6
         /// Similarity between two speakers' average voices above which they are merged at the end.
-        public var merge: Float = 0.75
+        public var merge: Float = 0.65
         /// Speakers with less total speech than this are folded into their closest match at the end.
-        public var minSpeakerSeconds: Double = 3.0
+        public var minSpeakerSeconds: Double = 5.0
 
         public init() {}
     }
