@@ -1,6 +1,6 @@
 #!/bin/bash
 # Checks that a packaged prebuilt app runs and loads its models, as the ./mmm launcher runs it.
-# Used by .github/workflows/prebuilt.yml. Usage: scripts/check-prebuilt.sh mmm-<commit>.tar.gz
+# Used by publish-prebuilt.sh. Usage: scripts/check-prebuilt.sh mmm-<commit>.tar.gz
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -20,8 +20,8 @@ BIN_DIR="$HOME/.local/bin"
 SHORTCUT="$HOME/Desktop/Mini Meeting Minutes.command"
 LOG="$HOME/Library/Logs/mini-meeting-minutes-install.log"
 PATH_MARKER="# Added by the Mini Meeting Minutes installer"
-# Every push to main is built by .github/workflows/prebuilt.yml and published as a release, so
-# most Macs build nothing and need no developer tools. Without git, the source code comes as an
+# scripts/publish-prebuilt.sh publishes main ready-built as a release, so most Macs build nothing
+# and need no developer tools. Without git, the source code comes as an
 # archive. Another repository or branch is built on this Mac.
 if [[ -z "${MMM_REPO:-}${MMM_BRANCH:-}" ]]; then
   PREBUILT_URL="${MMM_PREBUILT_URL-https://github.com/dudgeon/mini-meeting-minutes/releases/download/prebuilt}"

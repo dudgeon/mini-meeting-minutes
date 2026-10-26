@@ -197,10 +197,8 @@ Check with your risk advisors before using it.
   model file.
 - **Built in the open.** The installer downloads this repository from GitHub over HTTPS. It never
   asks for an administrator password. Two downloads aren't source code:
-  - The app itself, built from that same commit by a public GitHub Actions workflow
-    (`.github/workflows/prebuilt.yml`) and published as the `prebuilt` release.
-    - Each build has a GitHub attestation recording the commit and workflow run that made it.
-      Check one with `gh attestation verify mmm-<commit>.tar.gz --repo dudgeon/mini-meeting-minutes`.
+  - The app itself, built from that same commit by the maintainer with
+    `scripts/publish-prebuilt.sh` and published as the `prebuilt` release.
     - It isn't signed with a Developer ID or notarized. Like a build made on your Mac, it runs
       because it wasn't downloaded by a browser.
     - To build it yourself instead, clone the repository and run `./mmm`.

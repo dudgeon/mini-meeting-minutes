@@ -146,8 +146,7 @@ OPENROUTER_API_KEY=… /tmp/explainer-venv/bin/python scripts/explainer/make.py 
 | `Sources/mmm/Screen/` | The screen: the sidebar and synthwave looks, drawing, visualizers and input |
 | `Models/` | Vendored Core ML models; see [Models/README.md](../Models/README.md) |
 | `install.sh` | The one-line installer |
-| `.github/workflows/prebuilt.yml` | Builds and publishes the prebuilt app the installer downloads |
-| `scripts/` | `e2e_check.py` (the end-to-end check), `check-prebuilt.sh` (CI's check of the prebuilt app), plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
+| `scripts/` | `e2e_check.py` (the end-to-end check), `publish-prebuilt.sh` (builds main and publishes the prebuilt app the installer downloads; run it after pushing) with `check-prebuilt.sh`, plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.

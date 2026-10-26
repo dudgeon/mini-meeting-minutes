@@ -67,10 +67,10 @@ On an M1 MacBook Air with 8 GB, on battery, during a video call:
 
 ## A prebuilt, signed app (paused)
 
-Today the installer downloads `mmm` built by GitHub Actions, unsigned, which works because curl
-doesn't mark downloads as coming from the internet. A signed app would also open from a browser
-download, in a disk image, and could have permissions of its own. It's on hold; this is what it
-would take.
+Today the installer downloads `mmm` prebuilt by `scripts/publish-prebuilt.sh`, unsigned, which
+works because curl doesn't mark downloads as coming from the internet. A signed app would also
+open from a browser download, in a disk image, and could have permissions of its own. It's on
+hold; this is what it would take.
 
 **What Apple requires**
 
