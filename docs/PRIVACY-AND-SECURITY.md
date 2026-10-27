@@ -57,7 +57,7 @@ Little Snitch, or macOS's `nettop`, will show that `mmm` opens no connections.
 | Audio before you start recording | Memory only | Used for the level meters, then dropped. None of it reaches the transcriber |
 | Paused audio | Nowhere | Dropped as it arrives, never buffered |
 | Text not yet attributed to a speaker | Memory only | Seconds, until its speakers are worked out |
-| Voice embeddings (numeric voice fingerprints, not audio) | Memory only | Until the meeting ends; never saved |
+| Voice embeddings (numeric voice fingerprints, not audio) | Memory only | Until the meeting ends; never saved, unless you set `MMM_DUMP_SEGMENTS` |
 | Your minutes | A markdown file in `Documents/Minutes` (or where you choose) | Yours to keep, move or delete |
 | Words to keep (optional, for name redaction) | `Documents/Minutes/Words to keep.txt`, only if you create it | Yours |
 | Diagnostics | Only on screen, only if you set `MMM_DEBUG` | Not saved |
@@ -112,6 +112,9 @@ crashes or is killed, so there's never a leftover file to clean up.
   sensitive document: keep FileVault on, and think before you share or sync them.
 - **Diagnostics.** Setting `MMM_DEBUG=1` prints diagnostics to the terminal, including the words
   heard before redaction. It's for troubleshooting only, and nothing is saved.
+- **Speaker tuning.** Setting `MMM_DUMP_SEGMENTS` to a file saves every speaker turn's timing and
+  voice fingerprint there. It's for tuning speaker matching on test recordings. Voice fingerprints
+  are biometric data, so don't set it in a real meeting.
 
 ## Redaction
 

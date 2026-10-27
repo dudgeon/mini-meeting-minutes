@@ -39,6 +39,25 @@ over the screen:
 MMM_DEBUG=1 ./mmm 2>/tmp/mmm-debug.log
 ```
 
+## Speaker matching against real meetings
+
+Speaker matching (`SpeakerLinker.swift`) is tuned on real meetings with known speakers: the AMI
+meeting corpus (CC BY 4.0, groups.inf.ed.ac.uk/ami). Download a meeting's `Mix-Headset.wav` and
+the corpus's manual annotations (`ami_public_manual_1.6.2.zip`, for `segments/`), then:
+
+```sh
+MMM_DUMP_SEGMENTS=ES2004a.jsonl ./mmm transcribe --room ES2004a.Mix-Headset.wav --stdout >/dev/null
+python3 scripts/speaker_eval.py --segments-dir ami/segments ES2004a.jsonl
+```
+
+The dump holds each speaker turn's timing and voice fingerprint, so `speaker_eval.py` can replay
+matching with other settings in seconds. Keep its `Linker` defaults the same as `Thresholds`. It
+reports labels against the real speakers, the speech under a label that's mostly someone else's
+(**mixed**: naming can't fix it), and each person's speech outside their main label (**scattered**:
+naming fixes it). Overlapping speech means neither reaches zero. On ES2004a, IS1009a, TS3003a,
+EN2002a and ES2011a (four people each), the current settings give 5 to 7 labels, and mixing
+within 1 point of the best possible.
+
 ## Replays: the live path without devices
 
 ```sh
@@ -146,7 +165,7 @@ OPENROUTER_API_KEY=… /tmp/explainer-venv/bin/python scripts/explainer/make.py 
 | `Sources/mmm/Screen/` | The screen: the sidebar and synthwave looks, drawing, visualizers and input |
 | `Models/` | Vendored Core ML models; see [Models/README.md](../Models/README.md) |
 | `install.sh` | The one-line installer |
-| `scripts/` | `e2e_check.py` (the end-to-end check), `publish-prebuilt.sh` (builds main and publishes the prebuilt app the installer downloads; run it after pushing) with `check-prebuilt.sh`, plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
+| `scripts/` | `e2e_check.py` (the end-to-end check), `speaker_eval.py` (speaker matching against real meetings), `publish-prebuilt.sh` (builds main and publishes the prebuilt app the installer downloads; run it after pushing) with `check-prebuilt.sh`, plus maintainer tools: `vendor_models.py` (models), `generate_first_names.py` (the name list), `record_demo.py` with `terminal_render.py` (the README animation), `explainer/` (the explainer video), and `long_meeting_check.py` (memory over a long meeting) |
 
 Built on [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0), pinned to a
 main-branch commit that includes LocalVQE support.

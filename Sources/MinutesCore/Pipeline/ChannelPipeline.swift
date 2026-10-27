@@ -108,6 +108,34 @@ actor ChannelPipeline {
         FileHandle.standardError.write(Data("[\(channel.rawValue)] \(message())\n".utf8))
     }
 
+    /// With MMM_DUMP_SEGMENTS set to a file, every diarized segment's timing and voice embedding is
+    /// appended to it as a JSON line, for tuning speaker matching offline (`scripts/speaker_eval.py`).
+    /// Embeddings describe voices, not words; no audio is written.
+    private static let dumpURL = ProcessInfo.processInfo.environment["MMM_DUMP_SEGMENTS"].map {
+        URL(fileURLWithPath: $0)
+    }
+
+    private func dump(window: Int, segments: [SpeakerLinker.Segment]) {
+        guard let url = Self.dumpURL else { return }
+        var lines = ""
+        for segment in segments {
+            let record: [String: Any] = [
+                "channel": channel.rawValue, "window": window, "segment": segment.index, "local": segment.local,
+                "start": segment.start, "duration": segment.duration,
+                "embedding": segment.embedding.map { $0.map(Double.init) } ?? NSNull(),
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: record) else { continue }
+            lines += String(decoding: data, as: UTF8.self) + "\n"
+        }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(lines.utf8))
+    }
+
     /// Milliseconds since `start`, for the timings in the diagnostics.
     private static func milliseconds(since start: ContinuousClock.Instant) -> Double {
         let elapsed = start.duration(to: .now)
@@ -436,6 +464,7 @@ actor ChannelPipeline {
             }
         }
         let embeddingMilliseconds = Self.milliseconds(since: embeddingsStarted)
+        dump(window: windowIndex, segments: linked)
         let labels = linker.link(window: windowIndex, segments: linked)
         log(
             String(
